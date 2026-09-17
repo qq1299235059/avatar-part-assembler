@@ -34,6 +34,11 @@ namespace AvatarPartAssembler.Editor.Localization
             {
                 // ---- Window chrome, toolbar, language selector ------------------------------------------
                 { "Avatar Part Assembler", "部件装配器" },
+                // Menu path segments. These are not translated at runtime: they are the literal spellings the
+                // [MenuItem] attributes carry, kept here so the "no menu label without an entry" contract still
+                // has a single place to check. The Tools root is never localized.
+                { "Part Authoring", "部件编辑" },
+                { "Play Mode + Gesture Manager Compatibility", "Play Mode + Gesture Manager 兼容" },
                 { "Language", "语言" },
                 { "Auto (follow system)", "自动（跟随系统语言）" },
                 { "The language of the Avatar Part Assembler user interface. Stored per user, not in the project.",

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using AvatarPartAssembler;
+using AvatarPartAssembler.Editor.Authoring;
 using nadena.dev.ndmf;
 using nadena.dev.ndmf.config;
 using UnityEditor;
@@ -39,8 +40,20 @@ namespace AvatarPartAssembler.Editor.Ndmf
     [InitializeOnLoad]
     internal static class ApaPlayModeCompatibility
     {
+        private const string MenuGroupLabel = ApaAuthoringWindow.MenuGroupLabel;
+
+        private const string ChineseMenuGroupLabel = ApaAuthoringWindow.ChineseMenuGroupLabel;
+
+        private const string EnglishItemLabel = "Play Mode + Gesture Manager Compatibility";
+
+        // Two spellings of the same Tools submenu, mirroring ApaAuthoringWindow. Unlike the authoring entry these
+        // can both be registered: they occupy different paths, so neither the Tools menu nor the submenu shows a
+        // duplicate, and each language keeps the exact item the user learned.
         private const string MenuPath =
-            "Tools/Avatar Part Assembler/Play Mode + Gesture Manager Compatibility";
+            "Tools/" + MenuGroupLabel + "/" + EnglishItemLabel;
+
+        private const string LocalizedMenuPath =
+            "Tools/" + ChineseMenuGroupLabel + "/" + EnglishItemLabel;
 
         private const string EnabledPreferenceKey =
             "AvatarPartAssembler.PlayModeCompatibility.Enabled";
@@ -74,18 +87,45 @@ namespace AvatarPartAssembler.Editor.Ndmf
             EditorApplication.delayCall += RestoreIfStrandedInEditMode;
         }
 
+        /// <summary>Adds the item to the English submenu.</summary>
+        /// <remarks>
+        /// Both spellings are registered, unlike the authoring window's single item: they occupy two different
+        /// submenus, so neither <c>Tools</c> nor either submenu shows a duplicate, and a user who switches the
+        /// editor language keeps the item where they learned it. The checkmark is mirrored across both so the
+        /// state cannot disagree depending on which one was used.
+        /// </remarks>
         [MenuItem(MenuPath, false, 2150)]
         private static void ToggleCompatibility()
         {
             Enabled = !Enabled;
-            Menu.SetChecked(MenuPath, Enabled);
+            SyncMenuChecked();
+        }
+
+        /// <summary>Adds the same item to the Chinese submenu.</summary>
+        [MenuItem(LocalizedMenuPath, false, 2150)]
+        private static void ToggleCompatibilityLocalized()
+        {
+            ToggleCompatibility();
         }
 
         [MenuItem(MenuPath, true)]
         private static bool ValidateCompatibilityMenu()
         {
-            Menu.SetChecked(MenuPath, Enabled);
+            SyncMenuChecked();
             return true;
+        }
+
+        [MenuItem(LocalizedMenuPath, true)]
+        private static bool ValidateCompatibilityMenuLocalized()
+        {
+            SyncMenuChecked();
+            return true;
+        }
+
+        private static void SyncMenuChecked()
+        {
+            Menu.SetChecked(MenuPath, Enabled);
+            Menu.SetChecked(LocalizedMenuPath, Enabled);
         }
 
         private static void OnPlayModeStateChanged(PlayModeStateChange change)

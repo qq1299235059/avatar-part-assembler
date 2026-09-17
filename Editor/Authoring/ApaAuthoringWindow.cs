@@ -38,19 +38,28 @@ namespace AvatarPartAssembler.Editor.Authoring
     public sealed class ApaAuthoringWindow : EditorWindow, IApaAuthoringSceneHost
     {
         /// <summary>Menu path of the window.</summary>
+        /// <remarks>
+        /// <b>One door, not two.</b> This is the plugin's documented authoring entry, and it is the English
+        /// spelling of a single menu item. A second, permanently Chinese path used to sit next to it, which made
+        /// the <c>Tools</c> menu list the same window twice; it was removed.
+        /// <para>
+        /// Localization happens in the attribute, not at runtime: the item label comes from the named constants
+        /// below, and the Chinese spelling is compiled in only when <c>APA_CHINESE_MENU</c> is defined (see
+        /// <see cref="OpenFromChineseMenu"/>). Exactly one of the two is ever registered.
+        /// </para>
+        /// <para>
+        /// The root keeps Unity's canonical <c>Tools</c> segment in both spellings: registering a separate
+        /// top-level <c>工具</c> path can collide with Unity's localized Tools menu and make its normal entries
+        /// disappear. The <c>Tools</c> root is therefore never localized.
+        /// </para>
+        /// </remarks>
         public const string MenuPath = "Tools/Avatar Part Assembler/Part Authoring";
 
-        /// <summary>
-        /// Chinese menu alias of the window.
-        /// </summary>
-        /// <remarks>
-        /// A convenience alias only: <see cref="MenuPath"/> is the documented, English path and keeps working
-        /// unchanged, so an existing habit, a screenshot, or a link in a document does not break. The alias keeps
-        /// Unity's canonical <c>Tools</c> root and localizes only the submenu labels. Registering a separate top-level
-        /// <c>工具</c> path can collide with Unity's localized Tools menu and make its normal entries disappear.
-        /// Both entries call the same method, so the window is one implementation with two doors.
-        /// </remarks>
-        public const string ChineseMenuPath = "Tools/部件装配器/部件编辑";
+        /// <summary>English label of the submenu the window lives under.</summary>
+        public const string MenuGroupLabel = "Avatar Part Assembler";
+
+        /// <summary>Simplified Chinese label of the same submenu, registered instead of the English one.</summary>
+        public const string ChineseMenuGroupLabel = "部件装配器";
 
         private const string WindowTitle = "Avatar Part Assembler";
         private const string UndoLabel = "Edit Avatar Part";
@@ -131,8 +140,18 @@ namespace AvatarPartAssembler.Editor.Authoring
         [NonSerialized] private bool _signatureIdentityStale;
         [NonSerialized] private List<ValidationIssue> _draftDataIssues;
 
-        /// <summary>Opens the window.</summary>
+        /// <summary>
+        /// Shows the authoring window. The menu label follows the language the editor was compiled with.
+        /// </summary>
+        /// <remarks>
+        /// <c>MenuPath</c> is the documented English path and is what this method's callers use. The
+        /// <c>[MenuItem]</c> attribute below registers the English spelling and is replaced by
+        /// <see cref="OpenFromChineseMenu"/> when <c>APA_CHINESE_MENU</c> is defined. Exactly one of the two
+        /// items exists, so the <c>Tools</c> menu never shows this window twice.
+        /// </remarks>
+#if !APA_CHINESE_MENU
         [MenuItem(MenuPath, false, 10)]
+#endif
         public static ApaAuthoringWindow Open()
         {
             var window = GetWindow<ApaAuthoringWindow>(false, WindowTitle, true);
@@ -141,20 +160,22 @@ namespace AvatarPartAssembler.Editor.Authoring
             return window;
         }
 
-        /// <summary>
-        /// Opens the window from the Chinese menu alias.
-        /// </summary>
+#if APA_CHINESE_MENU
+        /// <summary>Opens the window from the Chinese spelling of the same path.</summary>
         /// <remarks>
-        /// The same entry point as <see cref="Open"/>; the alias exists so a Chinese user can find the window under
-        /// a Chinese menu, and the English path is untouched. The alias returns void because that is the signature
-        /// a menu entry point is documented to have; <see cref="Open"/> keeps its return value for its programmatic
-        /// callers.
+        /// Registered <b>instead of</b> the English item when <c>APA_CHINESE_MENU</c> is defined, never alongside
+        /// it. The symbol is set in <c>dev.avatar-part-assembler.editor.asmdef</c>; removing it from the assembly's
+        /// define list switches the menu back to English after Unity recompiles.
         /// </remarks>
-        [MenuItem(ChineseMenuPath, false, 11)]
+        [MenuItem(
+            "Tools/" + ChineseMenuGroupLabel + "/" + ApaLocalization.MenuPartAuthoringChinese,
+            false,
+            10)]
         public static void OpenFromChineseMenu()
         {
             Open();
         }
+#endif
 
         /// <summary>
         /// Opens the window on an existing profile, replacing whatever the window was editing.
