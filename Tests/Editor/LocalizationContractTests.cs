@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using AvatarPartAssembler.Editor;
@@ -411,11 +412,82 @@ namespace AvatarPartAssembler.Tests
         public void AuthoringMenuAliases_KeepUnitysCanonicalToolsRoot()
         {
             StringAssert.StartsWith("Tools/", ApaAuthoringWindow.MenuPath);
-            StringAssert.StartsWith("Tools/", ApaAuthoringWindow.ChineseMenuPath);
             Assert.IsFalse(
-                ApaAuthoringWindow.ChineseMenuPath.StartsWith("工具/", StringComparison.Ordinal),
+                ApaAuthoringWindow.MenuPath.StartsWith("工具/", StringComparison.Ordinal),
                 "MenuItem paths must not localize Unity's top-level Tools root. A separate top-level '工具' menu " +
                 "can collide with Unity's localized menu and hide its normal entries.");
+        }
+
+        [Test]
+        public void AuthoringWindow_RegistersExactlyOneMenuEntry()
+        {
+            // The plugin used to register an English path and a permanent Chinese alias side by side, which made
+            // the Tools menu list the same window twice. The localization now swaps the two spellings of ONE
+            // entry instead, so a second live [MenuItem] on the authoring window must never come back.
+            var sources = EditorSources();
+            Assert.IsNotEmpty(sources, "No editor sources were found; the source scan would be vacuous.");
+
+            var windowSource = sources.FirstOrDefault(
+                file => Path.GetFileName(file) == "ApaAuthoringWindow.cs");
+            Assert.IsNotNull(windowSource, "ApaAuthoringWindow.cs was not found in the editor sources.");
+
+            var text = File.ReadAllText(windowSource);
+
+            // Sanity-check the scan itself before trusting its counts.
+            Assert.AreEqual(
+                2,
+                Regex.Matches(text, @"\[MenuItem\(").Count,
+                "ApaAuthoringWindow must declare exactly two [MenuItem] attributes: the English one and the " +
+                "Chinese one. Any third is a duplicate entry.");
+            Assert.AreEqual(
+                1,
+                Regex.Matches(text, @"#if !?APA_CHINESE_MENU").Count,
+                "The two attributes must be guarded by complementary APA_CHINESE_MENU conditions.");
+        }
+
+        [Test]
+        public void LocalizedMenuGroupLabels_AreDistinctAndUntranslated()
+        {
+            Assert.AreEqual("Avatar Part Assembler", ApaAuthoringWindow.MenuGroupLabel);
+            Assert.AreEqual("部件装配器", ApaAuthoringWindow.ChineseMenuGroupLabel);
+            Assert.AreNotEqual(
+                ApaAuthoringWindow.MenuGroupLabel,
+                ApaAuthoringWindow.ChineseMenuGroupLabel,
+                "The two menu labels must be different spellings, otherwise the localization would be a no-op.");
+
+            // The item label comes from a named constant rather than the key table, so a missing translation can
+            // never silently fall back to English part-way through a menu path.
+            Assert.AreEqual("Part Authoring", ApaLocalization.MenuPartAuthoring);
+            Assert.AreEqual("部件编辑", ApaLocalization.MenuPartAuthoringChinese);
+
+            // Both spellings must address a real Tools submenu, and neither may localize the canonical root:
+            // a top-level '工具' menu can collide with Unity's localized Tools menu and hide its normal entries.
+            var english = "Tools/" + ApaAuthoringWindow.MenuGroupLabel + "/" + ApaLocalization.MenuPartAuthoring;
+            var chinese =
+                "Tools/" + ApaAuthoringWindow.ChineseMenuGroupLabel + "/" + ApaLocalization.MenuPartAuthoringChinese;
+
+            Assert.AreEqual(ApaAuthoringWindow.MenuPath, english);
+            Assert.IsTrue(chinese.StartsWith("Tools/", StringComparison.Ordinal));
+            Assert.IsFalse(chinese.StartsWith("工具/", StringComparison.Ordinal));
+            StringAssert.Contains(ApaAuthoringWindow.ChineseMenuGroupLabel, chinese);
+            StringAssert.Contains(ApaLocalization.MenuPartAuthoringChinese, chinese);
+        }
+
+        [Test]
+        public void EditorAssemblyDefinesTheMenuLanguageSymbol()
+        {
+            // The menu label is baked into an attribute argument, so the language switch has to be a compile-time
+            // symbol. It is declared in the assembly definition; if that entry disappears the Chinese menu silently
+            // stops being registered and the English one comes back, which is the bug this pins down.
+            var asmdef = Path.Combine(PackageRoot, "Editor", "dev.avatar-part-assembler.editor.asmdef");
+            if (!File.Exists(asmdef)) Assert.Ignore("Assembly definition not found: " + asmdef);
+
+            var text = File.ReadAllText(asmdef);
+            StringAssert.Contains(
+                "\"" + ApaLocalization.MenuLanguageDefineSymbol + "\"",
+                text,
+                "The editor assembly must define " + ApaLocalization.MenuLanguageDefineSymbol +
+                " so the Chinese menu path is the one compiled in. Remove it to compile the English menu.");
         }
 
         [Test]

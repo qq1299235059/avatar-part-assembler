@@ -7,6 +7,33 @@ semantic versioning.
 Milestones are recorded newest first. Each entry says what the milestone added and what
 it did **not** do, because a milestone boundary the reader cannot see is a defect.
 
+## [Unreleased] — menu consolidation
+
+**One authoring menu entry, and the `Tools` submenu follows the interface language.**
+
+### Changed
+
+- **The permanent Simplified Chinese authoring alias was merged into the English entry.** The window used to
+  register two live menu items — `Tools/Avatar Part Assembler/Part Authoring` and
+  `Tools/部件装配器/部件编辑` — which made the `Tools` menu list the same window twice. There is now exactly one
+  authoring item; its submenu label is `部件装配器` and its item label is `部件编辑` when the
+  `APA_CHINESE_MENU` symbol is defined (which `Editor/dev.avatar-part-assembler.editor.asmdef` does by default),
+  and the English spelling otherwise. Both spellings call the same `Open()`.
+
+- The two spellings are swapped by the `APA_CHINESE_MENU` preprocessor symbol rather than by a runtime branch.
+  A `[MenuItem]` argument must be a compile-time constant and the language preference lives in `EditorPrefs`,
+  which is not readable while the attribute is being constructed. Remove the symbol from the assembly's
+  `defines` list to compile the English menu; Unity recompiles and the menu follows.
+
+- The `Tools` root is still never localized. Only APA's own submenu and item labels change, so installing APA
+  cannot hide the editor's existing `Tools` entries.
+
+### Notes
+
+- `Tools/部件装配器/Play Mode + Gesture Manager 兼容` and its English counterpart are both registered on purpose.
+  They occupy two different submenus, so nothing is duplicated and a user keeps the item where they learned it;
+  the checkmark is mirrored across both so the state cannot disagree.
+
 ## [0.3.0-rc.3] — runtime build hardening and Play Mode / Gesture Manager compatibility
 
 **Release candidate; the real NDMF runtime path has now been exercised in Unity.** The remaining acceptance

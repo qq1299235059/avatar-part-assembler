@@ -208,6 +208,47 @@ namespace AvatarPartAssembler.Editor.Localization
             return Translate(ResolvedLanguage, english);
         }
 
+        /// <summary>English label of the menu item that opens the Part Authoring window.</summary>
+        public const string MenuPartAuthoring = "Part Authoring";
+
+        /// <summary>Simplified Chinese label of the same menu item.</summary>
+        public const string MenuPartAuthoringChinese = "部件编辑";
+
+        /// <summary>
+        /// Whether the editor is configured to register the Chinese spellings of the plugin's menu paths.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Read by the editor-time scripts that generate <c>EditorPrefs</c> state; it is <b>not</b> what
+        /// <c>[MenuItem]</c> attributes consult, because an attribute argument must be a compile-time constant.
+        /// The authoritative switch is the <c>APA_CHINESE_MENU</c> preprocessor symbol, which
+        /// <c>dev.avatar-part-assembler.editor.asmdef</c> defines from
+        /// <see cref="MenuLanguageDefineSymbol"/>.
+        /// </para>
+        /// <para>
+        /// This exists so a user can flip the symbol from the toolbar instead of editing the asmdef by hand.
+        /// </para>
+        /// </remarks>
+        public static bool UsesChineseMenuLog => IsSimplifiedChinese;
+
+        /// <summary>The scripting define symbol that switches the menu paths to Simplified Chinese.</summary>
+        public const string MenuLanguageDefineSymbol = "APA_CHINESE_MENU";
+
+        /// <summary>The label a menu path segment should carry, from its two named spellings.</summary>
+        /// <remarks>
+        /// Deliberately <b>not</b> routed through <see cref="Translate"/>. A menu label is not a message: it must
+        /// not depend on the key table, and a missing entry would silently swap a localized label back to
+        /// English. The spellings are named constants instead, and the localization contract test can see them.
+        /// <para>
+        /// Used by the menu-language switcher and by tests; the attributes themselves cannot call this because
+        /// their arguments are evaluated at attribute-construction time.
+        /// </para>
+        /// </remarks>
+        public static string ResolveMenuLabel(string english, string simplifiedChinese)
+        {
+            return IsSimplifiedChinese ? simplifiedChinese : english;
+        }
+
         /// <summary>Translates and formats a composite English format string.</summary>
         public static string TrFormat(string englishFormat, params object[] args)
         {
