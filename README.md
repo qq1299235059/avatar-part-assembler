@@ -27,7 +27,7 @@
 然后 Unity Package Manager → `+` → **Add package from git URL**：
 
 ```
-https://github.com/<owner>/<repo>.git
+https://github.com/qq1299235059/avatar-part-assembler.git
 ```
 
 `package.json` 就在仓库根目录，所以不需要 `?path=` 后缀。想锁版本可以写成 `...git#v0.3.0-rc.3`。
