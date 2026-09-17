@@ -7,6 +7,58 @@ semantic versioning.
 Milestones are recorded newest first. Each entry says what the milestone added and what
 it did **not** do, because a milestone boundary the reader cannot see is a defect.
 
+## [Unreleased] — review findings
+
+**Four defects found in a line-by-line review: one unsafe comparison, one unreachable branch, one unaudited
+skip, and one untested module.**
+
+### Fixed
+
+- **`SeamWeldPlanner` no longer welds a pair whose UVs cannot be compared.** The weld/split test was
+  `!(difference > epsilon)`, and a distance of `float.NaN` is not greater than anything — so a corrupt (NaN) UV
+  read as *agreement* and the pair welded, deleting the part's seam vertex and its UV on the strength of a
+  number that does not exist. A non-finite coordinate has no distance to the other side, so the pair is now
+  preserved instead: the same direction every other disagreement takes, because keeping both sides cannot
+  destroy data. Two identically infinite UVs are now preserved too, since `infinity - infinity` is NaN and used
+  to fail the same way. The condition is visible in the diagnostic as `nonFiniteUv=true` and on
+  `SeamUvPreservation.HasNonFiniteUv`, so the author is told "this data is corrupt" rather than "your UVs differ
+  by NaN".
+
+- **`AddGroup` no longer returns a bool that is always `true`.** The preview filter's group builder ended with
+  `groups.Add(...); return true;` and its call site carried a failure branch — release the renderer claim,
+  report an internal failure — that no input could reach. The method is now `void` and the branch is gone. A
+  branch that cannot run reads like a state the preview handles, so nobody notices the unwind inside it is
+  untested; the conditions that could have justified it are already handled where they happen.
+
+- **`CompatibilityRule`'s one-pass skip is now fail-safe.** The skip was a bare `return` guarded only by
+  `ValidationContext.CompatibilityVerified`, which is a *claim* rather than a proof: a call site that set the
+  flag without doing the work would have silently disabled the compatibility gate. The rule now honours the
+  claim only while it is coherent — verified **and** carrying no representative signature, which is exactly what
+  the per-installer pass produces. A contradictory context gets the check instead of a pass, so the worst
+  outcome of a future refactor is a duplicate report rather than a gate that no longer exists.
+
+### Added
+
+- **Tests for `ApaRemovalMaskSampler`, which had none** (`Tests/Editor/RemovalMaskSamplerTests.cs`). Covers the
+  fixed rule — seven sample points, a strict majority of four, Rec.601 luminance with alpha excluded, an
+  inclusive threshold boundary, invert — the texel addressing through Repeat / Mirror / Clamp and through point
+  versus bilinear filtering, the refusal of a non-finite UV, and every input refusal that does not need a
+  graphics device. The readback-dependent assertions skip with a stated reason on a runner without a device;
+  the rule itself is asserted with hand-built pixel arrays and needs none.
+
+- **Contract tests for the compatibility one-pass skip**, pinning both halves: a verified context is not
+  compared a second time, and a verified context that still carries a signature is.
+
+- **Two seam tests for non-finite UVs**: a NaN UV and two identical infinite UVs are preserved rather than
+  welded, and the preservation record carries `HasNonFiniteUv`.
+
+### Notes
+
+- The compatibility check itself was never skipped on the build path. `ContextBuilder` runs the rule once per
+  installer against that installer's own captured signature and only then marks the group's context verified,
+  which is strictly more than one representative signature could prove. What was missing was a test saying so,
+  and a guard against the flag being set without the work.
+
 ## [Unreleased] — menu consolidation
 
 **One authoring menu entry, and the `Tools` submenu follows the interface language.**

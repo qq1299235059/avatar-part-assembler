@@ -245,6 +245,7 @@ namespace AvatarPartAssembler.Editor
                             "; outputChannel=" + preservation.OutputChannel +
                             "; preservedPairs=" + preservation.PairCount +
                             "; weldedPairs=" + partPlan.WeldCount +
+                            (preservation.HasNonFiniteUv ? "; nonFiniteUv=true" : string.Empty) +
                             "; maxDifference=" + F(preservation.MaxDifference) +
                             "; samplePartVertex=" + preservation.SamplePartVertex +
                             "; sampleBaseVertex=" + preservation.SampleBaseVertex +

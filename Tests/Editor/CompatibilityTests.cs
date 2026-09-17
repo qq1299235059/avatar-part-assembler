@@ -345,6 +345,98 @@ namespace AvatarPartAssembler.Tests
             }
         }
 
+        // ---- The one-pass contract ------------------------------------------------------------------------
+        //
+        // ContextBuilder runs this rule once per installer against that installer's own signature and then marks
+        // the group's context verified, so the rule's own registration in the validator has nothing left to do
+        // for such a context. That skip is easy to mistake for "compatibility is never checked on the build
+        // path", and a bare "return" is also easy to turn into a gate that quietly stopped existing. These tests
+        // pin both halves: the skip happens, and it only happens while the claim is coherent.
+
+        /// <summary>
+        /// A verified context carries no representative signature — the per-installer pass is the only thing that
+        /// ever decided its compatibility — so the rule adds nothing.
+        /// </summary>
+        [Test]
+        public void VerifiedContextWithoutASignature_IsNotComparedASecondTime()
+        {
+            var issues = RunCompatibilityRule(verified: true, signature: null);
+
+            Assert.AreEqual(0, issues.Count, "One explicit pass per installer, one report.");
+        }
+
+        /// <summary>
+        /// The flag is a claim, not a proof. A context that claims verification and still carries a
+        /// representative signature contradicts itself, so the rule runs instead of trusting the flag.
+        /// </summary>
+        /// <remarks>
+        /// This is what makes the skip safe to keep: a call site that sets the flag without doing the work gets
+        /// the check rather than a silent pass, so the worst outcome of a future refactor is a duplicate report
+        /// instead of a compatibility gate that no longer exists.
+        /// </remarks>
+        [Test]
+        public void VerifiedContextThatStillCarriesASignature_IsStillCompared()
+        {
+            var issues = RunCompatibilityRule(verified: true, signature: MismatchingSignature());
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(ApaErrorCode.PartProfileIncompatible, issues[0].Code);
+        }
+
+        /// <summary>An unverified context with no signature reports it rather than assuming compatibility.</summary>
+        [Test]
+        public void UnverifiedContextWithoutASignature_ReportsSignatureMissing()
+        {
+            var issues = RunCompatibilityRule(verified: false, signature: null);
+
+            Assert.AreEqual(1, issues.Count);
+            Assert.AreEqual(ApaErrorCode.PartProfileIncompatible, issues[0].Code);
+            StringAssert.Contains("reason=signature-missing", issues[0].Detail);
+        }
+
+        /// <summary>An unverified context with a mismatching signature blocks, which is the M2 contract.</summary>
+        [Test]
+        public void UnverifiedContextWithAMismatchingSignature_Blocks()
+        {
+            var issues = RunCompatibilityRule(verified: false, signature: MismatchingSignature());
+
+            Assert.AreEqual(1, issues.Count);
+            StringAssert.Contains("reason=signature-mismatch", issues[0].Detail);
+        }
+
+        /// <summary>Runs the rule alone, so the assertion is about this rule and not about the validator.</summary>
+        private static List<ValidationIssue> RunCompatibilityRule(
+            bool verified,
+            ApaAvatarCompatibilityProfile signature)
+        {
+            var body = MeshFixtures.Body(8);
+            var part = MeshFixtures.Part(8, apexOffset: -1f);
+
+            var context = new ValidationContext(
+                MeshFixtures.BaseSnapshot(body),
+                ValidationContext.SortParts(new[]
+                {
+                    MeshFixtures.PartSnapshot("part-a", part, MeshFixtures.Seam(8))
+                }),
+                ApaNumericPolicy.Default,
+                signature,
+                "group-a",
+                verified);
+
+            var issues = new List<ValidationIssue>();
+            new CompatibilityRule().Validate(context, issues);
+            return issues;
+        }
+
+        /// <summary>A signature that differs from the body in one blocking safety field.</summary>
+        private static ApaAvatarCompatibilityProfile MismatchingSignature()
+        {
+            var body = MeshFixtures.Body(8);
+            var signature = MeshFixtures.SignatureFor(body);
+            signature.VertexCount = body.VertexCount + 1;
+            return signature;
+        }
+
         private static MeshSnapshot WithMetadata(
             MeshSnapshot source,
             string[] blendShapeNames,

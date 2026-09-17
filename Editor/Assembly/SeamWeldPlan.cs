@@ -79,7 +79,10 @@ namespace AvatarPartAssembler.Editor
         /// <summary>Number of seam pairs preserved because of this semantic.</summary>
         public int PairCount { get; }
 
-        /// <summary>Largest UV distance observed at a pair for this semantic.</summary>
+        /// <summary>
+        /// Largest UV distance observed at a pair for this semantic, or <see cref="float.PositiveInfinity"/>
+        /// when <see cref="HasNonFiniteUv"/> is true and no finite difference could be computed at all.
+        /// </summary>
         public float MaxDifference { get; }
 
         /// <summary>First pair (in pair order) that disagreed, for the diagnostic.</summary>
@@ -94,6 +97,17 @@ namespace AvatarPartAssembler.Editor
         /// <summary>The part value at the sample pair.</summary>
         public Vector4 SamplePartUv { get; }
 
+        /// <summary>
+        /// True when at least one pair was preserved because a UV coordinate was not a finite number, so the two
+        /// sides could not be compared at all rather than compared and found different.
+        /// </summary>
+        /// <remarks>
+        /// The distinction matters to the author: "your UVs disagree by 0.4" is a modelling difference they can
+        /// see, while "this UV is NaN" is corrupt source data. Both preserve the pair, and only the remedy
+        /// differs, so the condition is recorded instead of being folded into the distance.
+        /// </remarks>
+        public bool HasNonFiniteUv { get; }
+
         /// <summary>Creates a preservation record.</summary>
         public SeamUvPreservation(
             string semantic,
@@ -103,7 +117,8 @@ namespace AvatarPartAssembler.Editor
             int samplePartVertex,
             int sampleBaseVertex,
             Vector4 sampleBaseUv,
-            Vector4 samplePartUv)
+            Vector4 samplePartUv,
+            bool hasNonFiniteUv = false)
         {
             Semantic = semantic ?? string.Empty;
             OutputChannel = outputChannel;
@@ -113,6 +128,7 @@ namespace AvatarPartAssembler.Editor
             SampleBaseVertex = sampleBaseVertex;
             SampleBaseUv = sampleBaseUv;
             SamplePartUv = samplePartUv;
+            HasNonFiniteUv = hasNonFiniteUv;
         }
     }
 
@@ -317,6 +333,14 @@ namespace AvatarPartAssembler.Editor
     /// channel the mesh does not actually have is skipped exactly as the pre-M11 rule skipped it.
     /// </para>
     /// <para>
+    /// <b>A UV that is not a finite number is not agreement.</b> A NaN or infinite coordinate has no distance to
+    /// the other side, so the pair is preserved rather than welded — the same direction as every other
+    /// disagreement, because welding would delete the part vertex and its UV on the strength of a value that
+    /// carries no information. The preservation record says so through
+    /// <see cref="SeamUvPreservation.HasNonFiniteUv"/> instead of a distance, so the author is told "this data is
+    /// corrupt" rather than "your UVs differ by NaN".
+    /// </para>
+    /// <para>
     /// <b>Everything else is deliberately unchanged.</b> A seam whose shared UVs agree produces exactly the same
     /// plan it produced before, down to the vertex count, and a pair the author wrote is still a pair: the
     /// decision never re-matches positions and never rejects a displaced pair.
@@ -407,9 +431,13 @@ namespace AvatarPartAssembler.Editor
                     var channel = channels[c];
                     var baseUv = channel.BaseUvs[match.BaseVertex];
                     var partUv = channel.PartUvs[match.PartVertex];
-                    var difference = Distance(baseUv, partUv);
 
-                    if (!(difference > epsilon)) continue;
+                    // A pair whose UVs cannot be compared is preserved, never welded. Writing this as
+                    // "!(difference > epsilon)" alone would be a silent weld: a NaN distance is not greater than
+                    // anything, so a corrupt coordinate would read as agreement and the part's UV would be
+                    // deleted on the strength of a number that does not exist.
+                    var comparable = TryDistance(baseUv, partUv, out var difference);
+                    if (comparable && !(difference > epsilon)) continue;
 
                     if (conflicts == null) conflicts = new List<string>(1);
                     conflicts.Add(channel.Semantic);
@@ -421,7 +449,7 @@ namespace AvatarPartAssembler.Editor
                         accumulators.Add(accumulator);
                     }
 
-                    accumulator.Add(match, baseUv, partUv, difference);
+                    accumulator.Add(match, baseUv, partUv, difference, !comparable);
                 }
 
                 decisions.Add(new SeamPairDecision
@@ -484,17 +512,51 @@ namespace AvatarPartAssembler.Editor
             return a.OutputChannel.CompareTo(b.OutputChannel);
         }
 
-        /// <summary>Euclidean distance over the two components every UV semantic shares.</summary>
+        /// <summary>
+        /// Euclidean distance over the two components every UV semantic shares, with an explicit verdict on
+        /// whether the two coordinates are comparable at all.
+        /// </summary>
         /// <remarks>
+        /// <para>
         /// Components <c>z</c> and <c>w</c> are excluded for the same reason the pre-M11 rule excluded them: the
         /// product rule the seam contract is built on is the two-component one, and widening the comparison would
         /// start preserving seams the specification accepts as welded.
+        /// </para>
+        /// <para>
+        /// <b>A coordinate that is not finite has no distance to another coordinate.</b> Returning a distance
+        /// anyway is what made this comparison NaN-unsafe: <c>float.NaN</c> is not greater than any epsilon, so a
+        /// corrupt UV fell through the agreement test as "not different" and the pair welded — the part's seam
+        /// vertex was deleted and its UV destroyed on the strength of a number that does not exist. Reporting
+        /// "not comparable" separately, and having the caller preserve rather than weld in that case, keeps the
+        /// decision in the same direction as every other disagreement: keep both sides instead of deleting one.
+        /// </para>
+        /// <para>
+        /// Infinity is treated as non-comparable too. An infinite UV is not a texture coordinate, and
+        /// <c>infinity - infinity</c> is NaN, so two identically infinite UVs would otherwise read as agreement
+        /// for exactly the same reason.
+        /// </para>
         /// </remarks>
-        private static float Distance(Vector4 a, Vector4 b)
+        /// <returns>False when either side carries a non-finite <c>x</c> or <c>y</c>.</returns>
+        private static bool TryDistance(Vector4 a, Vector4 b, out float distance)
         {
+            if (!IsFinite(a.x) || !IsFinite(a.y) || !IsFinite(b.x) || !IsFinite(b.y))
+            {
+                // Positive infinity rather than NaN: the caller records it as the largest difference observed,
+                // and a diagnostic that prints "Infinity" next to nonFiniteUv=true states the truth — no finite
+                // bound on the difference — where a printed NaN would state nothing.
+                distance = float.PositiveInfinity;
+                return false;
+            }
+
             var dx = a.x - b.x;
             var dy = a.y - b.y;
-            return Mathf.Sqrt(dx * dx + dy * dy);
+            distance = Mathf.Sqrt(dx * dx + dy * dy);
+            return true;
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
         /// <summary>One same-name channel both sides carry, with the arrays the comparison reads.</summary>
@@ -529,6 +591,7 @@ namespace AvatarPartAssembler.Editor
             private int _sampleBaseVertex;
             private Vector4 _sampleBaseUv;
             private Vector4 _samplePartUv;
+            private bool _nonFinite;
 
             public int OutputChannel => _outputChannel;
 
@@ -541,8 +604,10 @@ namespace AvatarPartAssembler.Editor
                 _maxDifference = 0f;
             }
 
-            public void Add(SeamMatch match, Vector4 baseUv, Vector4 partUv, float difference)
+            public void Add(SeamMatch match, Vector4 baseUv, Vector4 partUv, float difference, bool nonFinite)
             {
+                if (nonFinite) _nonFinite = true;
+
                 // The first pair in pair order is the sample, so the reported vertices do not depend on which
                 // pair happened to have the largest difference.
                 if (_samplePartVertex < 0)
@@ -567,7 +632,8 @@ namespace AvatarPartAssembler.Editor
                     _samplePartVertex,
                     _sampleBaseVertex,
                     _sampleBaseUv,
-                    _samplePartUv);
+                    _samplePartUv,
+                    _nonFinite);
             }
         }
     }
