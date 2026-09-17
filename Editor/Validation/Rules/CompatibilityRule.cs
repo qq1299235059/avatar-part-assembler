@@ -55,12 +55,21 @@ namespace AvatarPartAssembler.Editor
         {
             if (context.Base == null || context.Base.Mesh == null) return;
 
-            // The per-installer pass already ran this rule once per installer, each time against that
-            // installer's own captured signature and anchored on that installer's part id. Running it again here
-            // through one representative signature cannot add information — the representative was the first
-            // installer's, which is arbitrary when a group's installers disagree — and would report every
-            // non-blocking verdict a second time with a different anchor. One explicit pass, one report.
-            if (context.CompatibilityVerified) return;
+            // The per-installer pass (ContextBuilder) already ran this rule once per installer, each time
+            // against that installer's own captured signature and anchored on that installer's part id. Running
+            // it again here through one representative signature cannot add information — the representative was
+            // the first installer's, which is arbitrary when a group's installers disagree — and would report
+            // every non-blocking verdict a second time with a different anchor. One explicit pass, one report.
+            //
+            // <b>The flag is a claim, not a proof, so it is honoured only while the claim is coherent.</b> A
+            // context the per-installer pass produced carries no representative signature: that pass is the only
+            // thing that ever decided its compatibility, and there is no second signature left to compare. A
+            // context that claims verification <i>and</i> still carries a signature contradicts itself — the two
+            // cannot both be the source of one group's verdict — so the rule runs instead of trusting the flag.
+            // That is the entire safety argument for skipping: a call site that sets the flag without doing the
+            // work gets the check, never a silent pass, and the failure mode of a future refactor is a duplicate
+            // report rather than a compatibility gate that quietly stopped existing.
+            if (context.CompatibilityVerified && context.ExpectedCompatibility == null) return;
 
             var expected = context.ExpectedCompatibility;
             if (expected == null)

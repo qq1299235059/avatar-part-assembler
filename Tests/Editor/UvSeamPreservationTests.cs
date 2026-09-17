@@ -351,6 +351,66 @@ namespace AvatarPartAssembler.Tests
             Assert.AreEqual(ApaWellKnownSemantics.Uv0, auto[0].Semantic);
         }
 
+        /// <summary>
+        /// A NaN UV is preserved, never welded.
+        /// </summary>
+        /// <remarks>
+        /// This is the case the distance comparison used to get wrong. <c>float.NaN</c> is not greater than any
+        /// epsilon, so a NaN distance fell through the "is it different?" test as agreement and the pair welded:
+        /// the part's seam vertex was deleted and its UV destroyed on the strength of a number that does not
+        /// exist. A coordinate with no distance to the other side is now preserved, which is the same direction
+        /// every other disagreement takes — keep both sides rather than delete one.
+        /// </remarks>
+        [Test]
+        public void NonFiniteUv_IsPreservedRatherThanWelded()
+        {
+            var body = MeshFixtures.Body(RingCount, MeshFixtures.RingUvs(RingCount));
+
+            var partUvs = MeshFixtures.RingUvs(RingCount);
+            partUvs[3] = new Vector4(float.NaN, partUvs[3].y, 0f, 0f);
+            var part = MeshFixtures.Part(RingCount, partUvs, apexOffset: -1f);
+
+            var result = ApaCore.Plan(SeamContext(body, part));
+            Assert.IsTrue(result.Succeeded, result.Issues.FormatAll());
+
+            var welds = result.Plan.SeamWeldsFor("part-a");
+            Assert.IsTrue(welds.IsSplit(3), "A NaN UV must not weld the pair away.");
+            Assert.AreEqual(1, welds.SplitCount);
+            Assert.AreEqual(RingCount - 1, welds.WeldCount, "Only the pair carrying the NaN is affected.");
+
+            Assert.AreEqual(1, welds.UvPreservations.Count);
+            Assert.IsTrue(welds.UvPreservations[0].HasNonFiniteUv,
+                "The record says the data is corrupt rather than reporting a NaN distance.");
+        }
+
+        /// <summary>
+        /// Two identically infinite UVs are preserved rather than welded.
+        /// </summary>
+        /// <remarks>
+        /// The reason is the same arithmetic: <c>infinity - infinity</c> is NaN, so two vertices carrying the
+        /// "same" infinite coordinate produced a NaN distance and read as agreement. An infinite UV is not a
+        /// texture coordinate at all, so the pair keeps its own vertex.
+        /// </remarks>
+        [Test]
+        public void InfiniteUvOnBothSides_IsPreservedRatherThanWelded()
+        {
+            var baseUvs = MeshFixtures.RingUvs(RingCount);
+            baseUvs[5] = new Vector4(float.PositiveInfinity, float.PositiveInfinity, 0f, 0f);
+            var body = MeshFixtures.Body(RingCount, baseUvs);
+
+            var partUvs = MeshFixtures.RingUvs(RingCount);
+            partUvs[5] = new Vector4(float.PositiveInfinity, float.PositiveInfinity, 0f, 0f);
+            var part = MeshFixtures.Part(RingCount, partUvs, apexOffset: -1f);
+
+            var result = ApaCore.Plan(SeamContext(body, part));
+            Assert.IsTrue(result.Succeeded, result.Issues.FormatAll());
+
+            var welds = result.Plan.SeamWeldsFor("part-a");
+            Assert.IsTrue(welds.IsSplit(5), "Two infinite UVs have no finite distance and must not weld.");
+            Assert.AreEqual(1, welds.SplitCount);
+            Assert.IsTrue(welds.UvPreservations[0].HasNonFiniteUv);
+        }
+
         private static ValidationContext SeamContext(MeshSnapshot body, MeshSnapshot part)
         {
             var semantics = new[] { new ApaUvChannelSemantic("UVMap", 0) };

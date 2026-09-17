@@ -206,14 +206,10 @@ namespace AvatarPartAssembler.Editor.Preview
                 // renderer set is filtered through one claim set.
                 if (!claimed.Add(request.TargetRenderer)) continue;
 
-                if (!AddGroup(context, request, claimed, groups))
-                {
-                    // The group's target was claimed but its renderer set could not be completed; release the
-                    // claim so a later root that can show the group is not blocked by this one.
-                    claimed.Remove(request.TargetRenderer);
-                    ApaPreviewDiagnostics.ReportInternalFailure(
-                        "Group '" + request.GroupKey + "' could not be expressed as a render group", null);
-                }
+                // The group's renderer set cannot fail to be expressed: the target is non-null here and every
+                // consumed renderer that cannot be proxied is skipped rather than rejected. There is therefore
+                // no "claimed but not grouped" state to unwind, and no claim to release.
+                AddGroup(request, claimed, groups);
             }
         }
 
@@ -234,9 +230,17 @@ namespace AvatarPartAssembler.Editor.Preview
         /// SkinnedMeshRenderer) is left out and reported as a note rather than silently producing the doubled
         /// geometry the group exists to prevent.
         /// </para>
+        /// <para>
+        /// <b>Adding a group cannot fail, so this method returns nothing.</b> It used to return a bool that was
+        /// always <c>true</c>, and the call site carried a failure branch — release the claim, report an internal
+        /// failure — that no input could reach. A branch that cannot run is worse than no branch: it reads like
+        /// a state the preview handles, so nobody notices that the unwind it performs is untested and
+        /// unreachable. The conditions that could have justified it are all handled where they happen: the
+        /// target is checked for null before the claim, and an unproxyable consumed renderer is reported and
+        /// skipped rather than failing the group.
+        /// </para>
         /// </remarks>
-        private static bool AddGroup(
-            ComputeContext context,
+        private static void AddGroup(
             ApaPreviewRequest request,
             HashSet<Renderer> claimed,
             ImmutableList<RenderGroup>.Builder groups)
@@ -266,7 +270,6 @@ namespace AvatarPartAssembler.Editor.Preview
             }
 
             groups.Add(RenderGroup.For(renderers).WithData(request, ApaPreviewRequestComparer.Instance));
-            return true;
         }
 
         /// <summary>The target renderers of the groups that resolved one, in discovery order.</summary>
