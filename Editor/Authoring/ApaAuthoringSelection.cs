@@ -1,0 +1,568 @@
+using System;
+using System.Collections.Generic;
+using AvatarPartAssembler.Editor.Integration;
+using UnityEngine;
+
+namespace AvatarPartAssembler.Editor.Authoring
+{
+    /// <summary>
+    /// The objects and output paths the author has selected in the authoring window.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Selection state is kept apart from the profile draft, the validation, and the writers so that each can be
+    /// reviewed on its own: this type answers "what is being authored", the draft answers "what is the part",
+    /// and nothing here writes an asset or mutates a scene object.
+    /// </para>
+    /// <para>
+    /// Every member is serializable, so a window that holds one survives an assembly reload without the author
+    /// losing their place. Scenes references are held as plain object references and are never copied into the
+    /// profile: the profile records the <i>path</i> of the target renderer, and the reference is only used to
+    /// capture that path while the authoring scene is open.
+    /// </para>
+    /// </remarks>
+    [Serializable]
+    public sealed class ApaAuthoringSelection
+    {
+        [SerializeField] private GameObject _avatarRoot;
+        [SerializeField] private SkinnedMeshRenderer _targetRenderer;
+        [SerializeField] private GameObject _partRoot;
+        [SerializeField] private Renderer _partRenderer;
+        [SerializeField] private Transform _targetArmature;
+        [SerializeField] private Transform _partArmature;
+        [SerializeField] private string _outputFolder = ApaAuthoringAssetPaths.DefaultOutputFolder;
+
+        /// <summary>The avatar the part will be installed into.</summary>
+        public GameObject AvatarRoot
+        {
+            get => _avatarRoot;
+            set => _avatarRoot = value;
+        }
+
+        /// <summary>
+        /// The target body renderer whose mesh is replaced. A <see cref="SkinnedMeshRenderer"/> is required
+        /// because the schema-v2 signature records a bone signature, which only a skinned renderer has.
+        /// </summary>
+        public SkinnedMeshRenderer TargetRenderer
+        {
+            get => _targetRenderer;
+            set => _targetRenderer = value;
+        }
+
+        /// <summary>Root of the part geometry, as authored in the scene.</summary>
+        public GameObject PartRoot
+        {
+            get => _partRoot;
+            set => _partRoot = value;
+        }
+
+        /// <summary>The renderer the part geometry is read from.</summary>
+        public Renderer PartRenderer
+        {
+            get => _partRenderer;
+            set => _partRenderer = value;
+        }
+
+        /// <summary>
+        /// The armature inside the avatar that the part's bones merge into (M10).
+        /// </summary>
+        /// <remarks>
+        /// Stored as a live reference while authoring and persisted as
+        /// <see cref="TargetArmaturePath"/> — the path relative to the avatar root — because the reference is a
+        /// scene object and the profile is a reusable asset. It must be the avatar root itself or a descendant of
+        /// it; <see cref="Validate"/> refuses anything else.
+        /// </remarks>
+        public Transform TargetArmature
+        {
+            get => _targetArmature;
+            set => _targetArmature = value;
+        }
+
+        /// <summary>
+        /// The armature inside the part that owns the part's own bones (M10).
+        /// </summary>
+        /// <remarks>
+        /// Persisted as <see cref="PartArmaturePath"/> — the path relative to the part root. It must be the part
+        /// root itself or a descendant of it.
+        /// </remarks>
+        public Transform PartArmature
+        {
+            get => _partArmature;
+            set => _partArmature = value;
+        }
+
+        /// <summary>Folder offered for newly authored profiles and prefabs.</summary>
+        public string OutputFolder
+        {
+            get => string.IsNullOrEmpty(_outputFolder)
+                ? ApaAuthoringAssetPaths.DefaultOutputFolder
+                : _outputFolder;
+            set => _outputFolder = value ?? string.Empty;
+        }
+
+        /// <summary>The selected target mesh, or null.</summary>
+        public Mesh TargetMesh => ApaCompatibilityCapture.ResolveMesh(_targetRenderer);
+
+        /// <summary>The selected part mesh, or null.</summary>
+        public Mesh PartMesh => ApaCompatibilityCapture.ResolveMesh(_partRenderer);
+
+        /// <summary>The avatar root transform, or null.</summary>
+        public Transform AvatarRootTransform => _avatarRoot != null ? _avatarRoot.transform : null;
+
+        /// <summary>True when a target body renderer is selected.</summary>
+        public bool HasTarget => _targetRenderer != null;
+
+        /// <summary>True when a part root and renderer are selected.</summary>
+        public bool HasPart => _partRoot != null && _partRenderer != null;
+
+        /// <summary>True when every object a full validation needs is selected.</summary>
+        public bool IsComplete => _avatarRoot != null && _targetRenderer != null && HasPart;
+
+        /// <summary>
+        /// Avatar-root-relative path the signature would record for the target armature, or empty when none is
+        /// selected.
+        /// </summary>
+        public string TargetArmaturePath =>
+            MeshSnapshotFactory.RelativePath(AvatarRootTransform, _targetArmature);
+
+        /// <summary>
+        /// Part-root-relative path the profile would record for the part armature, or empty when none is
+        /// selected.
+        /// </summary>
+        public string PartArmaturePath =>
+            MeshSnapshotFactory.RelativePath(PartRootTransform, _partArmature);
+
+        /// <summary>True when both armature selections are made.</summary>
+        public bool HasArmatureSelection => _targetArmature != null && _partArmature != null;
+
+        /// <summary>
+        /// True when the selected target body renderer carries bones, so an armature selection is required.
+        /// </summary>
+        /// <remarks>
+        /// The same rule the build applies (<see cref="ApaArmatureScope.RequiresScope"/>): a renderer with no bone
+        /// list has no bone identity to scope, so no selection is demanded for it.
+        /// </remarks>
+        public bool TargetNeedsArmature => ApaArmatureScope.RequiresScope(_targetRenderer);
+
+        /// <summary>True when the selected part renderer carries bones, so an armature selection is required.</summary>
+        public bool PartNeedsArmature => ApaArmatureScope.RequiresScope(_partRenderer);
+
+        /// <summary>Avatar-root-relative path the signature would record for the target renderer.</summary>
+        public string TargetRendererPath => ApaCompatibilityCapture.ResolveRendererPath(_avatarRoot, _targetRenderer);
+
+        /// <summary>Avatar-root-relative path of the part root, used in diagnostics only.</summary>
+        public string PartRootPath => MeshSnapshotFactory.RelativePath(AvatarRootTransform, PartRootTransform);
+
+        /// <summary>Avatar-root-relative path of the part renderer, used in diagnostics only.</summary>
+        public string PartRendererPath => MeshSnapshotFactory.RelativePath(AvatarRootTransform, PartRendererTransform);
+
+        private Transform PartRootTransform => _partRoot != null ? _partRoot.transform : null;
+
+        private Transform PartRendererTransform => _partRenderer != null ? _partRenderer.transform : null;
+
+        /// <summary>
+        /// Reports what stops the selection from being used, with the same codes and detail tokens the assembly
+        /// core uses for the same conditions.
+        /// </summary>
+        /// <remarks>
+        /// The messages for a missing mesh, an unreadable mesh, and a missing part renderer are the ones
+        /// <see cref="ContextBuilder"/> and <see cref="MeshSnapshotFactory"/> produce, so an author sees one
+        /// explanation for one defect whether it is reported by the window or by a build.
+        /// </remarks>
+        public List<ValidationIssue> Validate()
+        {
+            var issues = new List<ValidationIssue>();
+
+            if (_avatarRoot == null)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "The avatar root is null.",
+                    detail: "reason=null-avatar-root"));
+            }
+
+            if (_targetRenderer == null)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "No target body renderer is selected.",
+                    detail: "reason=missing-target-renderer"));
+            }
+            else if (TargetMesh == null)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "The target renderer '" + _targetRenderer.name + "' has no mesh assigned.",
+                    detail: "renderer=" + _targetRenderer.name));
+            }
+            else if (!TargetMesh.isReadable)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.UnsupportedMeshAttribute,
+                    ApaIssuePhase.Attributes,
+                    "Mesh '" + TargetMesh.name + "' is not readable. Enable Read/Write in its import settings.",
+                    detail: "mesh=" + TargetMesh.name + "; reason=not-readable"));
+            }
+
+            if (_targetRenderer != null && _avatarRoot != null
+                && !IsUnder(_targetRenderer.transform, _avatarRoot.transform))
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "The target renderer '" + _targetRenderer.name + "' is not inside the selected avatar root '" +
+                    _avatarRoot.name + "'. The signature records an avatar-root-relative path, so a renderer " +
+                    "outside the root would be recorded as a scene path that stops resolving once the part is " +
+                    "installed.",
+                    detail: "reason=target-renderer-outside-avatar-root; path=" + TargetRendererPath));
+            }
+
+            if (_partRoot == null)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "No part root is selected.",
+                    detail: "reason=missing-part-root"));
+            }
+            else if (_partRenderer == null)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "Part root '" + _partRoot.name + "' has no Renderer to take geometry from.",
+                    detail: "partRoot=" + _partRoot.name));
+            }
+            else if (PartMesh == null)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "Part renderer '" + _partRenderer.name + "' has no mesh assigned.",
+                    detail: "renderer=" + _partRenderer.name));
+            }
+            else if (!PartMesh.isReadable)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.UnsupportedMeshAttribute,
+                    ApaIssuePhase.Attributes,
+                    "Mesh '" + PartMesh.name + "' is not readable. Enable Read/Write in its import settings.",
+                    detail: "mesh=" + PartMesh.name + "; reason=not-readable"));
+            }
+
+            if (_partRoot != null && _partRenderer != null
+                && !IsUnder(_partRenderer.transform, _partRoot.transform))
+            {
+                // The core resolves the part renderer with GetComponentInChildren from the part root, so a
+                // renderer outside the root would silently be replaced by a different one at validation time.
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.TargetRendererNotFound,
+                    ApaIssuePhase.Compatibility,
+                    "The selected part renderer '" + _partRenderer.name + "' is not inside the part root '" +
+                    _partRoot.name + "'. The part geometry would be read from a different renderer than the one " +
+                    "selected.",
+                    detail: "reason=part-renderer-outside-part-root; partRoot=" + _partRoot.name +
+                            "; renderer=" + _partRenderer.name));
+            }
+
+            ValidateArmatureSelections(issues);
+
+            return issues;
+        }
+
+        /// <summary>
+        /// Reports the armature selections that are missing or outside the root they must belong to (M10).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A selection is required exactly when the renderer on that side carries bones, which is the same rule
+        /// the build applies (<see cref="ApaArmatureScope.RequiresScope"/>): a renderer with no bone list has no
+        /// bone identity to scope, so nothing is demanded of it.
+        /// </para>
+        /// <para>
+        /// The messages match <see cref="ApaArmatureScope.TryResolve"/> and <see cref="ContextBuilder"/>, so the
+        /// window and the build describe one defect one way. The codes are the same (<c>APA043</c>) and the detail
+        /// carries the same <c>reason=</c> tokens.
+        /// </para>
+        /// </remarks>
+        private void ValidateArmatureSelections(List<ValidationIssue> issues)
+        {
+            if (_targetArmature == null && TargetNeedsArmature)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.ArmatureSelectionInvalid,
+                    ApaIssuePhase.Compatibility,
+                    "The target body is skinned, but no target armature is selected, so the body's bones have no " +
+                    "scope to be recorded in. Select the armature inside the avatar that owns the body's bones.",
+                    detail: "reason=missing-target-armature"));
+            }
+            else if (_targetArmature != null)
+            {
+                if (_avatarRoot == null)
+                {
+                    issues.Add(ValidationIssue.Error(
+                        ApaErrorCode.ArmatureSelectionInvalid,
+                        ApaIssuePhase.Compatibility,
+                        "A target armature is selected but no avatar root is, so its avatar-root-relative path " +
+                        "cannot be recorded.",
+                        detail: "reason=target-armature-not-found; path=" + TargetArmaturePath));
+                }
+                else if (!IsUnder(_targetArmature, _avatarRoot.transform))
+                {
+                    issues.Add(ValidationIssue.Error(
+                        ApaErrorCode.ArmatureSelectionInvalid,
+                        ApaIssuePhase.Compatibility,
+                        "The selected target armature '" + _targetArmature.name + "' is not inside the avatar root " +
+                        "'" + _avatarRoot.name + "'. A bone identity is recorded relative to the selected " +
+                        "armature, so an armature outside the avatar has no path this pipeline can resolve after " +
+                        "the build clone is relocated.",
+                        detail: "reason=target-armature-outside-root; path=" + TargetArmaturePath));
+                }
+            }
+
+            if (_partArmature == null && PartNeedsArmature)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.ArmatureSelectionInvalid,
+                    ApaIssuePhase.Compatibility,
+                    "The part is skinned, but no part armature is selected, so its bones have no scope to be " +
+                    "recorded in and cannot be identified as the body's joints. Select the armature inside the " +
+                    "part that owns the part's bones.",
+                    detail: "reason=missing-part-armature"));
+            }
+            else if (_partArmature != null)
+            {
+                if (_partRoot == null)
+                {
+                    issues.Add(ValidationIssue.Error(
+                        ApaErrorCode.ArmatureSelectionInvalid,
+                        ApaIssuePhase.Compatibility,
+                        "A part armature is selected but no part root is, so its part-root-relative path cannot " +
+                        "be recorded.",
+                        detail: "reason=part-armature-not-found; path=" + PartArmaturePath));
+                }
+                else if (!IsUnder(_partArmature, _partRoot.transform))
+                {
+                    issues.Add(ValidationIssue.Error(
+                        ApaErrorCode.ArmatureSelectionInvalid,
+                        ApaIssuePhase.Compatibility,
+                        "The selected part armature '" + _partArmature.name + "' is not inside the part root '" +
+                        _partRoot.name + "'. The part's bones are recorded relative to the selected armature, so " +
+                        "an armature outside the part root belongs to a different object than the one being " +
+                        "assembled.",
+                        detail: "reason=part-armature-outside-root; path=" + PartArmaturePath));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Fills any empty slot from the current Unity selection, without overwriting a slot the author already
+        /// chose. Returns true when something was adopted.
+        /// </summary>
+        /// <remarks>
+        /// The heuristic is narrow on purpose: a selected <see cref="AvatarPartInstaller"/> identifies a part, a
+        /// selected <see cref="SkinnedMeshRenderer"/> identifies a target body, and nothing else is guessed.
+        /// </remarks>
+        public bool AdoptFromUnitySelection(GameObject active)
+        {
+            if (active == null) return false;
+
+            var changed = false;
+
+            if (_partRoot == null)
+            {
+                var installer = active.GetComponentInParent<AvatarPartInstaller>();
+                var candidate = installer != null ? installer.gameObject : null;
+                if (candidate != null)
+                {
+                    _partRoot = candidate;
+                    _partRenderer = candidate.GetComponentInChildren<Renderer>(true);
+                    changed = true;
+                }
+            }
+
+            if (_targetRenderer == null)
+            {
+                var skinned = active.GetComponentInParent<SkinnedMeshRenderer>();
+                if (skinned != null)
+                {
+                    _targetRenderer = skinned;
+                    changed = true;
+                }
+            }
+
+            if (_avatarRoot == null)
+            {
+                var anchor = _targetRenderer != null
+                    ? _targetRenderer.transform
+                    : (_partRoot != null ? _partRoot.transform : active.transform);
+
+                var root = FindAvatarRoot(anchor);
+                if (root != null)
+                {
+                    _avatarRoot = root.gameObject;
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        /// <summary>Adopts a renderer as the target body and reports whether anything changed.</summary>
+        public bool AdoptTarget(Renderer renderer)
+        {
+            if (renderer == null) return false;
+
+            var skinned = renderer as SkinnedMeshRenderer;
+            if (skinned == null || _targetRenderer == skinned) return false;
+
+            _targetRenderer = skinned;
+            return true;
+        }
+
+        /// <summary>Adopts a GameObject as the part root and its first renderer as the part renderer.</summary>
+        public bool AdoptPart(GameObject partRoot)
+        {
+            if (partRoot == null) return false;
+            if (_partRoot == partRoot) return false;
+
+            _partRoot = partRoot;
+            _partRenderer = partRoot.GetComponentInChildren<Renderer>(true);
+            return true;
+        }
+
+        /// <summary>
+        /// Proposes the two armature selections from the live hierarchy, filling only the empty ones.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>This is a suggestion, not a decision.</b> It is driven by an explicit button, it never overwrites a
+        /// selection the author made, and what it proposes is immediately visible in the two object fields and can
+        /// be changed before anything is saved. The build never runs it: by the time a profile is validated or
+        /// assembled, the selection is serialized author data
+        /// (<see cref="ApaBoneProfile.TargetArmaturePath"/> and <see cref="ApaBoneProfile.PartArmaturePath"/>).
+        /// </para>
+        /// <para>The proposal rule itself is <see cref="ProposeArmatures"/>, shared with the shortcut that creates
+        /// a profile from the installer inspector, so the two surfaces cannot propose different armatures for the
+        /// same hierarchy.</para>
+        /// </remarks>
+        /// <returns>A short description of what was proposed, for the window's status line.</returns>
+        public string SuggestArmatures()
+        {
+            var proposed = new List<string>();
+
+            ProposeArmatures(
+                _avatarRoot != null ? _avatarRoot.transform : null,
+                _targetRenderer,
+                _partRoot,
+                out var targetArmature,
+                out var partArmature);
+
+            if (_targetArmature == null && targetArmature != null)
+            {
+                _targetArmature = targetArmature;
+                proposed.Add("target='" + TargetArmaturePath + "'");
+            }
+
+            if (_partArmature == null && partArmature != null)
+            {
+                _partArmature = partArmature;
+                proposed.Add("part='" + PartArmaturePath + "'");
+            }
+
+            return proposed.Count == 0
+                ? Localization.ApaLocalization.Tr("nothing to propose: both armatures are already selected")
+                : string.Join("; ", proposed.ToArray());
+        }
+
+        /// <summary>
+        /// The two armature levels a merge is defined over, read from the live hierarchy.
+        /// </summary>
+        /// <param name="avatarRoot">The avatar root, or null.</param>
+        /// <param name="targetRenderer">The target body renderer, or null.</param>
+        /// <param name="partRoot">The part root, or null.</param>
+        /// <param name="targetArmature">Receives the proposed target armature, or null.</param>
+        /// <param name="partArmature">Receives the proposed part armature, or null.</param>
+        /// <remarks>
+        /// <para>
+        /// The target side is the object that owns the avatar's skeleton
+        /// (<see cref="MergeArmatureGenerator.ResolveAvatarArmatureRoot"/>: the humanoid hips' parent for a
+        /// humanoid avatar); the part side is the object whose children are the part's highest bone
+        /// (<see cref="MergeArmatureGenerator.TryFindPartSkeleton"/>). Both are the bone level a Modular Avatar
+        /// merge is defined over, which is exactly what the armature-relative identity needs.
+        /// </para>
+        /// <para>
+        /// <b>It is a proposal, never a substitute for a selection.</b> The result is written into a visible object
+        /// field or into a draft the author is about to review; nothing in the build path calls it, and a proposal
+        /// that fails to resolve simply yields null, which leaves the selection empty and the build blocking with
+        /// <c>APA043</c> as it would for any other missing selection.
+        /// </para>
+        /// </remarks>
+        public static void ProposeArmatures(
+            Transform avatarRoot,
+            Renderer targetRenderer,
+            GameObject partRoot,
+            out Transform targetArmature,
+            out Transform partArmature)
+        {
+            targetArmature = null;
+            partArmature = null;
+
+            if (avatarRoot != null && ApaArmatureScope.RequiresScope(targetRenderer))
+            {
+                var candidate = MergeArmatureGenerator.ResolveAvatarArmatureRoot(avatarRoot.gameObject, null);
+                if (candidate != null) targetArmature = candidate.transform;
+            }
+
+            if (partRoot != null && ApaArmatureScope.RequiresScope(partRoot.GetComponentInChildren<Renderer>(true)))
+            {
+                if (MergeArmatureGenerator.TryFindPartSkeleton(partRoot, out _, out var mergeRoot)
+                    && mergeRoot != null)
+                {
+                    partArmature = mergeRoot.transform;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The avatar root that contains a transform: the nearest ancestor carrying an <see cref="Animator"/>,
+        /// falling back to the scene root object.
+        /// </summary>
+        /// <remarks>
+        /// A VRChat avatar descriptor requires an Animator on the descriptor object, so the nearest Animator
+        /// ancestor is the best dependency-free identity for "the avatar" that does not require this package to
+        /// reference the VRChat SDK. The fallback keeps an unrigged test hierarchy usable. The chosen root is
+        /// always visible in the window and can be overridden, so the heuristic never becomes a hidden decision.
+        /// </remarks>
+        public static Transform FindAvatarRoot(Transform start)
+        {
+            if (start == null) return null;
+
+            var current = start;
+            while (current != null)
+            {
+                if (current.GetComponent<Animator>() != null) return current;
+                current = current.parent;
+            }
+
+            return start.root;
+        }
+
+        private static bool IsUnder(Transform candidate, Transform ancestor)
+        {
+            if (candidate == null || ancestor == null) return false;
+
+            var current = candidate;
+            while (current != null)
+            {
+                if (current == ancestor) return true;
+                current = current.parent;
+            }
+
+            return false;
+        }
+    }
+}

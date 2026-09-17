@@ -1,0 +1,20 @@
+{
+    "name": "dev.avatar-part-assembler.editor.preview",
+    "rootNamespace": "AvatarPartAssembler.Editor.Preview",
+    "references": [
+        "dev.avatar-part-assembler.runtime",
+        "dev.avatar-part-assembler.editor",
+        "nadena.dev.ndmf"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

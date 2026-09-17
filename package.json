@@ -1,0 +1,27 @@
+{
+  "name": "dev.avatar-part-assembler",
+  "displayName": "Avatar Part Assembler",
+  "version": "0.3.0-rc.3",
+  "unity": "2022.3",
+  "description": "Non-destructive, deterministic assembly of modular VRChat avatar body parts. Validates explicit seam pairs, removes the declared base triangles, welds UV-compatible seam vertices, preserves deliberate UV seams as coincident split vertices, and merges geometry, skinning, blend shapes, UV semantics, material semantics, and bone identities into one generated mesh per target renderer. Build, Scene View preview, and Play Mode/Gesture Manager testing share the NDMF pipeline. English and Simplified Chinese UI. Release candidate: the real NDMF runtime build path is validated; full acceptance is still pending.",
+  "keywords": [
+    "vrchat",
+    "avatar",
+    "ndmf",
+    "modular-avatar",
+    "mesh",
+    "non-destructive"
+  ],
+  "author": {
+    "name": "Avatar Part Assembler contributors"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "com.unity.modules.animation": "1.0.0"
+  },
+  "vpmDependencies": {
+    "com.vrchat.avatars": ">=3.10.4 <3.11.0",
+    "nadena.dev.ndmf": ">=1.14.0 <2.0.0-a",
+    "nadena.dev.modular-avatar": ">=1.18.0-beta.0 <2.0.0-a"
+  }
+}
