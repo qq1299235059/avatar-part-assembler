@@ -7,6 +7,25 @@ semantic versioning.
 Milestones are recorded newest first. Each entry says what the milestone added and what
 it did **not** do, because a milestone boundary the reader cannot see is a defect.
 
+## [0.3.0-rc.8] — standalone prefabs from prefab instances
+
+**Creating a part prefab from a scene Prefab Instance now produces an independent regular Prefab, preserving the
+instance's current scene state without changing the original instance.**
+
+### Fixed
+
+- `ApaPrefabGenerator` copies a Prefab Instance to a temporary parentless clone, unpacks only its outermost
+  connection with `PrefabUnpackMode.OutermostRoot`, and saves that clone. The original scene object is never
+  unpacked or reparented, nested prefab instances remain nested, and the temporary clone is destroyed on every
+  success and failure path.
+- The authoring note now explicitly says the generated asset is an independent prefab rather than a variant of the
+  source prefab.
+
+### Notes
+
+- Static contract coverage pins the clone/unpack/save ordering and cleanup. A live Unity Editor integration run is
+  still recommended to verify `PrefabUtility.GetPrefabAssetType` on a real scene instance.
+
 ## [0.3.0-rc.7] — installer health line, persisted bone-fit defaults, preview culling fix
 
 **The installer Inspector now answers one question at a glance — is this part ready? — and the preview no

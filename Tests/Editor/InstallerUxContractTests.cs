@@ -398,6 +398,25 @@ namespace AvatarPartAssembler.Tests
                 "The culling fix must stay in the preview layer: " + string.Join(" | ", offenders.ToArray()));
         }
 
+        [Test]
+        public void PrefabInstanceSourcesAreUnpackedBeforeSaving()
+        {
+            var source = ReadSource(Path.Combine("Editor", "Authoring", "ApaPrefabGenerator.cs"));
+
+            StringAssert.Contains("CloneUnpackedInstanceRoot(selection.PartRoot)", source);
+            StringAssert.Contains("PrefabUnpackMode.OutermostRoot", source);
+            StringAssert.Contains("InteractionMode.AutomatedAction", source);
+            StringAssert.Contains("PrefabUtility.SaveAsPrefabAsset(\n                    clone != null ? clone : selection.PartRoot",
+                source,
+                "The save must use the unpacked clone when the selected part is a prefab instance.");
+            StringAssert.Contains("DestroyImmediate(clone)", source,
+                "The temporary clone must be cleaned up on every exit path.");
+
+            var cloneIndex = source.IndexOf("CloneUnpackedInstanceRoot(selection.PartRoot)", StringComparison.Ordinal);
+            var saveIndex = source.IndexOf("PrefabUtility.SaveAsPrefabAsset(", cloneIndex, StringComparison.Ordinal);
+            Assert.Greater(saveIndex, cloneIndex, "The clone must be prepared before the prefab save.");
+        }
+
         // ---- Localization, version, and changelog ------------------------------------------------------
 
         [Test]
@@ -433,17 +452,21 @@ namespace AvatarPartAssembler.Tests
         }
 
         [Test]
-        public void PackageMovesToRc7WithAChangelogEntry()
+        public void PackageMovesToRc8WithAChangelogEntry()
         {
             StringAssert.Contains(
-                "\"version\": \"0.3.0-rc.7\"",
+                "\"version\": \"0.3.0-rc.8\"",
                 ReadSource("package.json"),
-                "The package prerelease version must be 0.3.0-rc.7.");
+                "The package prerelease version must be 0.3.0-rc.8.");
 
             var changelog = ReadSource("CHANGELOG.md");
-            StringAssert.Contains("## [0.3.0-rc.7]", changelog, "The changelog must record the new version.");
-            StringAssert.Contains("updateWhenOffscreen", changelog, "The changelog must record the culling fix.");
-            StringAssert.Contains("Follow Avatar Bones", changelog, "The changelog must record the new defaults.");
+            StringAssert.Contains("## [0.3.0-rc.8]", changelog, "The changelog must record the new version.");
+            StringAssert.Contains("PrefabUnpackMode.OutermostRoot", changelog,
+                "The changelog must record the unpack mode.");
+            StringAssert.Contains("independent prefab", changelog,
+                "The changelog must record that the generated prefab is independent.");
+            StringAssert.Contains("## [0.3.0-rc.7]", changelog,
+                "The previous milestone must remain recorded.");
         }
     }
 }

@@ -703,10 +703,10 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Nothing was written and the existing prefab at '{0}' is untouched: the scene part contains " +
                   "{1} reference(s) that cannot be stored in an asset.",
                   "未写入任何内容，'{0}' 处已有的预制体保持不变：场景中的部件包含 {1} 个无法存入资产的引用。" },
-                { "The scene part root is a prefab instance, so the new prefab was built from its current " +
-                  "scene state rather than from the source prefab.",
-                  "场景中的部件根对象是一个预制体实例，因此新预制体是按其在场景中的当前状态生成的，" +
-                  "而不是按源预制体生成的。" },
+                { "The scene part root is a prefab instance, so the new prefab was built from the instance's " +
+                  "current scene state as an independent prefab, not as a variant of the source prefab.",
+                  "场景中的部件根对象是一个预制体实例，因此新预制体是按其实时场景状态生成的独立预制体，" +
+                  "而不是源预制体的变体。" },
                 { "Unity could not save '{0}' as a prefab at '{1}'.", "Unity 无法将 '{0}' 保存为 '{1}' 处的预制体。" },
                 { "The prefab at '{0}' could not be loaded for configuration.", "无法加载 '{0}' 处的预制体进行配置。" },
                 { "The existing prefab at '{0}' was replaced with the scene part, but the written prefab could " +

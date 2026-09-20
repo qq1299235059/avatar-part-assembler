@@ -132,6 +132,11 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// none. A path occupied by an asset that is not a prefab is refused as well, so a write can never replace
     /// an unrelated asset.
     /// </description></item>
+    /// <item><description>
+    /// A part root that is a scene Prefab Instance is saved from a temporary, unpacked copy of that instance, so
+    /// the asset is an independent regular prefab carrying the instance's current scene state rather than a
+    /// variant of the source prefab. The author's instance is never unpacked or modified.
+    /// </description></item>
     /// </list>
     /// <para>
     /// <b>Nothing is overwritten silently.</b> <see cref="CreateFromScene"/> refuses an existing path unless the
@@ -164,7 +169,10 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <remarks>
         /// The saved prefab contains the part root's current scene state. The scene object itself is only read:
         /// adding the installer happens on a loaded copy of the prefab, so the author's scene hierarchy is not
-        /// modified by generating a prefab.
+        /// modified by generating a prefab. When the part root is a scene Prefab Instance, the save is made from a
+        /// temporary unpacked copy of it rather than from the instance itself, which is what makes the result an
+        /// independent regular prefab instead of a Prefab Variant; the original keeps its prefab connection and its
+        /// overrides, and the copy is destroyed before this method returns.
         /// </remarks>
         public static ApaPrefabResult CreateFromScene(
             ApaAuthoringSelection selection,
@@ -256,6 +264,11 @@ namespace AvatarPartAssembler.Editor.Authoring
             var createdFile = action == ApaAssetWriteAction.Create;
             var notes = new List<string>();
 
+            // The temporary clone the prefab-instance path saves instead of the author's scene object. It is
+            // created inside the try below and destroyed in the finally that closes it, so no path — including an
+            // early return or an exception — can leave it behind in the scene.
+            var clone = default(GameObject);
+
             if (!createdFile)
             {
                 // Overwriting an existing prefab starts by saving the scene part over that file, so a portability
@@ -296,14 +309,23 @@ namespace AvatarPartAssembler.Editor.Authoring
 
                 if (PrefabUtility.IsPartOfPrefabInstance(selection.PartRoot))
                 {
+                    // Saving the instance directly would connect the new asset to the instance's source prefab,
+                    // which is what produces a Prefab Variant. The instance is copied to a temporary parentless
+                    // clone and that clone is unpacked, so the asset written below is an independent regular
+                    // prefab built from the state the author sees. The original is only read: it is never
+                    // unpacked, reparented, or otherwise modified, and the clone is destroyed in the finally.
+                    clone = CloneUnpackedInstanceRoot(selection.PartRoot);
+
                     notes.Add(Tr(
-                        "The scene part root is a prefab instance, so the new prefab was built from its " +
-                        "current scene state rather than from the source prefab."));
+                        "The scene part root is a prefab instance, so the new prefab was built from the instance's " +
+                        "current scene state as an independent prefab, not as a variant of the source prefab."));
                 }
 
                 // Step 1: copy the scene part root into a prefab asset. The scene object is not modified by this
-                // call, and the copy is what everything below operates on.
-                var saved = PrefabUtility.SaveAsPrefabAsset(selection.PartRoot, normalized, out var savedOk);
+                // call, and the copy is what everything below operates on. A prefab instance is saved from the
+                // unpacked clone instead of from the instance itself.
+                var saved = PrefabUtility.SaveAsPrefabAsset(
+                    clone != null ? clone : selection.PartRoot, normalized, out var savedOk);
                 if (!savedOk || saved == null)
                 {
                     if (createdFile) ApaAssetDatabaseUtility.RollBackCreatedAsset(normalized);
@@ -408,6 +430,12 @@ namespace AvatarPartAssembler.Editor.Authoring
                         "Generating the prefab threw " + e.GetType().Name + ": " + e.Message,
                         detail: "exception=" + e.GetType().FullName)),
                     TrFormat("Generating the prefab failed: {0}", e.Message));
+            }
+            finally
+            {
+                // The clone exists only to be saved: once the save, the installer configuration, the portability
+                // scan, and the unload are done — or one of them has failed — it must not be left in the scene.
+                if (clone != null) UnityEngine.Object.DestroyImmediate(clone);
             }
         }
 
@@ -728,6 +756,67 @@ namespace AvatarPartAssembler.Editor.Authoring
             return string.Equals(propertyPath, ProfileFieldPath, StringComparison.Ordinal)
                    || string.Equals(propertyPath, PartRootFieldPath, StringComparison.Ordinal)
                    || string.Equals(propertyPath, TargetRendererFieldPath, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Copies a scene prefab instance to a parentless scene clone whose outermost prefab connection is unpacked.
+        /// </summary>
+        /// <param name="source">The scene object the author selected. It is only read, never modified.</param>
+        /// <remarks>
+        /// <para>
+        /// <see cref="PrefabUtility.SaveAsPrefabAsset(GameObject, string)"/> keeps a saved prefab instance connected
+        /// to the instance's source prefab, and that connection is what makes the written asset a Prefab Variant.
+        /// The part prefab this generator writes has to be an independent, regular prefab instead, so the instance
+        /// is copied first and the copy is disconnected from its source before it is saved.
+        /// </para>
+        /// <para>
+        /// The copy is deliberately parentless. A clone left under the instance's parent would itself become part
+        /// of that parent's prefab instance, and saving it would reintroduce the connection this method exists to
+        /// remove. The selected hierarchy's current serialized state travels with the copy, and its local position,
+        /// rotation, and scale are written explicitly afterwards, so the asset stores the values the author sees
+        /// whatever context the copy was created in.
+        /// </para>
+        /// <para>
+        /// <see cref="PrefabUnpackMode.OutermostRoot"/> removes only the copy's own outermost connection: a nested
+        /// prefab instance inside the part stays an instance and keeps its link to its own prefab asset. The caller
+        /// owns the returned object and must destroy it.
+        /// </para>
+        /// </remarks>
+        private static GameObject CloneUnpackedInstanceRoot(GameObject source)
+        {
+            var clone = UnityEngine.Object.Instantiate(source);
+            try
+            {
+                clone.name = source.name;
+
+                // Instantiate copies the serialized local transform, but the copy is made explicit here so the
+                // asset stores exactly the values the author sees rather than depending on that default.
+                clone.transform.localPosition = source.transform.localPosition;
+                clone.transform.localRotation = source.transform.localRotation;
+                clone.transform.localScale = source.transform.localScale;
+
+                if (!PrefabUtility.IsPartOfPrefabInstance(clone))
+                {
+                    // The copy did not carry a prefab connection, so there is nothing to unpack: it is already an
+                    // ordinary hierarchy and saving it produces a regular prefab.
+                    return clone;
+                }
+
+                var instanceRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(clone);
+                PrefabUtility.UnpackPrefabInstance(
+                    instanceRoot != null ? instanceRoot : clone,
+                    PrefabUnpackMode.OutermostRoot,
+                    InteractionMode.AutomatedAction);
+
+                return clone;
+            }
+            catch
+            {
+                // A copy that could not be prepared must not be left behind in the scene: the caller only receives
+                // the object on success, so the failure path destroys it here and lets the caller report the error.
+                UnityEngine.Object.DestroyImmediate(clone);
+                throw;
+            }
         }
 
         private static bool IsPortableReference(UnityEngine.Object value, GameObject root)
