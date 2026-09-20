@@ -57,8 +57,6 @@ jobs:
           mkdir -p dist/package
           git archive HEAD | tar -x -C dist/package
           rm -rf dist/package/.github
-          echo "dist/package/${{ steps.manifest.outputs.name }}-${{ steps.manifest.outputs.version }}.zip" > zip_path
-          echo "dist/package/${{ steps.manifest.outputs.name }}-${{ steps.manifest.outputs.version }}.unitypackage" > unity_path
 
       - name: Create VPM package zip
         shell: bash
@@ -66,7 +64,6 @@ jobs:
           set -euo pipefail
           cd dist/package
           zip -qr "../${{ steps.manifest.outputs.zip_file }}" .
-          mv "../${{ steps.manifest.outputs.zip_file }}" "../${{ steps.manifest.outputs.zip_file }}"
 
       - name: Track Unity asset metadata
         shell: bash
