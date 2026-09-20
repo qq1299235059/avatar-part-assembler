@@ -368,6 +368,7 @@ namespace AvatarPartAssembler.Editor
                 string.Empty,
                 policy,
                 false,
+                false,
                 issues);
         }
 
@@ -392,7 +393,8 @@ namespace AvatarPartAssembler.Editor
             GameObject avatarRoot,
             ApaNumericPolicy numericPolicy,
             out List<ValidationIssue> issues,
-            bool allowPostMergePartArmatureScope = false)
+            bool allowPostMergePartArmatureScope = false,
+            bool partMeshFingerprintsVerifiedBeforeMerge = false)
         {
             issues = new List<ValidationIssue>();
 
@@ -479,6 +481,7 @@ namespace AvatarPartAssembler.Editor
                     key,
                     policy,
                     allowPostMergePartArmatureScope,
+                    partMeshFingerprintsVerifiedBeforeMerge,
                     issues);
 
                 // A failing group does not stop the walk: the report must describe every group, so the caller
@@ -644,16 +647,10 @@ namespace AvatarPartAssembler.Editor
 
         private static PartOrderingKey OrderingKeyFor(Transform avatarRoot, AvatarPartInstaller installer)
         {
-            if (installer == null) return new PartOrderingKey(ApaPartSlot.Custom, string.Empty, string.Empty);
-
-            var profile = installer.Profile;
-            var identity = profile != null ? profile.IdentityOrNull : null;
+            if (installer == null) return new PartOrderingKey(string.Empty, string.Empty);
 
             return new PartOrderingKey(
-                installer.ResolveConflictPriority(),
-                installer.ResolveSlot(),
                 PartIdOf(installer),
-                identity != null ? identity.DisplayName : string.Empty,
                 MeshSnapshotFactory.RelativePath(avatarRoot, installer.transform));
         }
 
@@ -915,6 +912,7 @@ namespace AvatarPartAssembler.Editor
             string groupKey,
             ApaNumericPolicy policy,
             bool allowPostMergePartArmatureScope,
+            bool partMeshFingerprintsVerifiedBeforeMerge,
             List<ValidationIssue> issues)
         {
             var groupIssues = new List<ValidationIssue>();
@@ -938,7 +936,13 @@ namespace AvatarPartAssembler.Editor
                 groupIssues);
             var ordered = ValidationContext.SortParts(partSnapshots);
 
-            ValidateInstallerCompatibility(baseSnapshot, ordered, policy, installers, groupIssues);
+            ValidateInstallerCompatibility(
+                baseSnapshot,
+                ordered,
+                policy,
+                installers,
+                partMeshFingerprintsVerifiedBeforeMerge,
+                groupIssues);
 
             if (groupIssues.Exists(issue => issue.IsBlocking))
             {
@@ -951,7 +955,14 @@ namespace AvatarPartAssembler.Editor
             // The context carries no representative signature: every installer was checked against the base with
             // its own signature above, which is strictly more than one representative could prove, and there is no
             // arbitrary "first captured signature" left to anchor a second, redundant comparison on.
-            return new ValidationContext(baseSnapshot, ordered, policy, null, groupKey, compatibilityVerified: true);
+            return new ValidationContext(
+                baseSnapshot,
+                ordered,
+                policy,
+                null,
+                groupKey,
+                compatibilityVerified: true,
+                partMeshFingerprintsVerifiedBeforeMerge: partMeshFingerprintsVerifiedBeforeMerge);
         }
 
         /// <summary>
@@ -1096,6 +1107,7 @@ namespace AvatarPartAssembler.Editor
             IReadOnlyList<PartSnapshot> parts,
             ApaNumericPolicy policy,
             IReadOnlyList<AvatarPartInstaller> installers,
+            bool partMeshFingerprintsVerifiedBeforeMerge,
             List<ValidationIssue> issues)
         {
             var rule = new CompatibilityRule();
@@ -1107,7 +1119,12 @@ namespace AvatarPartAssembler.Editor
 
                 var localIssues = new List<ValidationIssue>();
                 rule.Validate(
-                    new ValidationContext(baseSnapshot, parts, policy, profile.CompatibilityOrNull),
+                    new ValidationContext(
+                        baseSnapshot,
+                        parts,
+                        policy,
+                        profile.CompatibilityOrNull,
+                        partMeshFingerprintsVerifiedBeforeMerge: partMeshFingerprintsVerifiedBeforeMerge),
                     localIssues);
 
                 var partId = PartIdOf(installer);
@@ -1351,13 +1368,9 @@ namespace AvatarPartAssembler.Editor
                     : ApaCore.InferMaterialSemantics(meshSnapshot.SubMeshCount, materials);
 
                 var policySnapshot = PartPolicySnapshot.FromProfile(profile);
-                var identity = profile.IdentityOrNull;
 
                 var orderingKey = new PartOrderingKey(
-                    policySnapshot.ConflictPriority,
-                    installer.ResolveSlot(),
                     PartIdOf(installer),
-                    identity != null ? identity.DisplayName : string.Empty,
                     MeshSnapshotFactory.RelativePath(avatarRoot.transform, installer.transform));
 
                 var removal = profile.RemovalOrNull;
@@ -1376,8 +1389,8 @@ namespace AvatarPartAssembler.Editor
 
                 result.Add(new PartSnapshot(
                     PartIdOf(installer),
-                    identity != null ? identity.DisplayName : string.Empty,
-                    installer.ResolveSlot(),
+                    string.Empty,
+                    ApaPartSlot.Custom,
                     orderingKey,
                     meshSnapshot,
                     transforms,
@@ -1389,7 +1402,8 @@ namespace AvatarPartAssembler.Editor
                     profile.SeamOrNull,
                     materials,
                     policySnapshot,
-                    partRenderer));
+                    partRenderer,
+                    profile.PartMeshFingerprint));
             }
 
             return result;

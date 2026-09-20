@@ -54,15 +54,55 @@ namespace AvatarPartAssembler.Editor.Preview
         /// <summary>True when at least one bone path did not resolve.</summary>
         public bool HasMissingBones => MissingPaths.Count > 0;
 
-        private ApaPreviewBoneMap(Transform[] bones, Transform rootBone, IReadOnlyList<string> missingPaths)
+        /// <summary>
+        /// For each bone, the avatar bone the build's armature merge would reparent it under, or null when the
+        /// merge does not touch it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// At build time the part armature is merged into the target armature, and each matched part bone is
+        /// reparented under its avatar counterpart with its world pose preserved. The preview draws the authoring
+        /// hierarchy, where that merge has not happened — the part armature is still a sibling of the avatar
+        /// armature — so a part bone in the table follows the part's own hierarchy and ignores avatar motion,
+        /// which lets the drawn mesh and the visible skeleton drift apart. This table records, per bone, the
+        /// counterpart the merge would give it, so the node can substitute shadow bones parented under the live
+        /// avatar bones and the preview follows the motion the build produces.
+        /// </para>
+        /// <para>
+        /// With APA's always-empty merge prefix and suffix, a part bone is merge-matched exactly when its
+        /// armature-relative path resolves under the target armature. Bones the body already owns resolve under
+        /// the target armature directly, so they are their own counterpart and carry null here; the armature
+        /// roots themselves are never reparented. The property is null on a map built without merge information —
+        /// for instance after shadow substitution, which has already resolved the following behavior.
+        /// </para>
+        /// </remarks>
+        public Transform[] MergeParents { get; }
+
+        private ApaPreviewBoneMap(
+            Transform[] bones,
+            Transform rootBone,
+            IReadOnlyList<string> missingPaths,
+            Transform[] mergeParents)
         {
             Bones = bones;
             RootBone = rootBone;
             MissingPaths = missingPaths;
+            MergeParents = mergeParents;
         }
 
         /// <summary>A map for a plan without skinning.</summary>
-        public static ApaPreviewBoneMap Empty { get; } = new ApaPreviewBoneMap(s_noBones, null, s_noPaths);
+        public static ApaPreviewBoneMap Empty { get; } =
+            new ApaPreviewBoneMap(s_noBones, null, s_noPaths, null);
+
+        /// <summary>
+        /// Builds a map for a bone table the preview has already finalized — shadow substitution included, so no
+        /// merge information is carried.
+        /// </summary>
+        internal static ApaPreviewBoneMap Create(
+            Transform[] bones, Transform rootBone, IReadOnlyList<string> missingPaths)
+        {
+            return new ApaPreviewBoneMap(bones, rootBone, missingPaths, null);
+        }
 
         /// <summary>Resolves a plan's final bone table against the two selected armatures.</summary>
         /// <param name="plan">The plan whose table is resolved.</param>
@@ -83,6 +123,7 @@ namespace AvatarPartAssembler.Editor.Preview
 
             var bones = plan.BoneTable.Bones;
             var transforms = new Transform[bones.Count];
+            var mergeParents = new Transform[bones.Count];
             var missing = new List<string>();
             Transform rootBone = null;
 
@@ -101,9 +142,23 @@ namespace AvatarPartAssembler.Editor.Preview
                 }
 
                 if (ApaAvatarPath.IsRoot(path)) rootBone = transform;
+
+                // A bone resolved against a part armature is exactly a bone the build would reparent under its
+                // avatar counterpart: with the always-empty merge prefix and suffix, the path lookup under the
+                // target armature is the merge match. Record that counterpart so the node can substitute a shadow
+                // bone that follows avatar motion; a bone the target armature resolves for itself is live under
+                // the avatar already and needs none.
+                if (!ReferenceEquals(scope, targetArmature) && !ApaAvatarPath.IsRoot(path) && targetArmature != null)
+                {
+                    var counterpart = ResolvePath(targetArmature, path);
+                    if (counterpart != null && !ReferenceEquals(counterpart, transform))
+                    {
+                        mergeParents[i] = counterpart;
+                    }
+                }
             }
 
-            return new ApaPreviewBoneMap(transforms, rootBone, missing);
+            return new ApaPreviewBoneMap(transforms, rootBone, missing, mergeParents);
         }
 
         /// <summary>
@@ -344,10 +399,21 @@ namespace AvatarPartAssembler.Editor.Preview
                 skinned.sharedMesh = mesh;
                 ApplyBones(skinned, boneMap);
 
-                // NDMF copies the original's local bounds onto the proxy every frame. The assembled mesh can be
-                // larger than the body it replaces (it contains the part geometry), and stale bounds cull the
-                // part region at the edges of the view, so the generated bounds win.
-                skinned.localBounds = mesh.bounds;
+                // NDMF copies the original renderer's local bounds onto the proxy every frame. The assembled mesh
+                // can be larger than the body it replaces (it contains the part geometry), and a tight generated
+                // rest-pose bounds alone culls the part region at the edges of the view — the mesh then vanishes
+                // at some camera angles. The copied source bounds are the animation-safe bounds of the renderer
+                // this proxy stands in for, so they are preserved and unioned with the generated bounds instead
+                // of being replaced. Preview only: nothing here touches the built mesh or a real avatar renderer.
+                var bounds = proxy.localBounds;
+                bounds.Encapsulate(mesh.bounds);
+                skinned.localBounds = bounds;
+
+                // A skinned renderer whose bounds do not track its animation is culled as soon as the animated
+                // geometry leaves the rest-pose bounds. Recomputing them is more expensive than trusting them, and
+                // correctness in the preview matters more than that preview-only cost, so the proxy — and only
+                // the proxy — asks Unity to keep the bounds up to date.
+                skinned.updateWhenOffscreen = true;
 
                 ApplyBlendShapeWeights(skinned, shapeBindings);
             }

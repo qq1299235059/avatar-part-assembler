@@ -299,7 +299,8 @@ namespace AvatarPartAssembler.Editor
             GameObject avatarRoot,
             ApaNumericPolicy numericPolicy,
             out List<ValidationIssue> issues,
-            bool allowPostMergePartArmatureScope = false)
+            bool allowPostMergePartArmatureScope = false,
+            bool partMeshFingerprintsVerifiedBeforeMerge = false)
         {
             var policy = numericPolicy ?? ApaNumericPolicy.Default;
 
@@ -307,7 +308,8 @@ namespace AvatarPartAssembler.Editor
                 avatarRoot,
                 policy,
                 out var discovery,
-                allowPostMergePartArmatureScope);
+                allowPostMergePartArmatureScope,
+                partMeshFingerprintsVerifiedBeforeMerge);
             discovery = discovery ?? new List<ValidationIssue>();
 
             if (groups.Count == 0)

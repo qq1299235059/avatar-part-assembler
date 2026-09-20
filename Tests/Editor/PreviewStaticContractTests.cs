@@ -236,6 +236,10 @@ namespace AvatarPartAssembler.Tests
 
             StringAssert.Contains("BitConverter.DoubleToInt64Bits", fingerprint);
             StringAssert.Contains("Algorithm", fingerprint);
+            StringAssert.Contains("apa-preview-fnv1a64-v2", fingerprint);
+            Assert.IsFalse(
+                fingerprint.Contains("bone-world-to-local"),
+                "Live bone pose matrices must not invalidate the preview assembly cache.");
             Assert.IsFalse(
                 Regex.IsMatch(fingerprint, @"\bHashCode\s*\."),
                 "System.HashCode is seeded per process and cannot key a cache that must be reproducible.");
@@ -257,10 +261,56 @@ namespace AvatarPartAssembler.Tests
             StringAssert.Contains("rootBone", observer);
             StringAssert.Contains("ObserveMesh", observer);
             StringAssert.Contains("ObserveTransform", observer);
+            StringAssert.Contains("ObserveBoneStructure", observer);
             StringAssert.Contains("ObservePath", observer);
 
             // Blend shape weights are deliberately not observed: they are applied per frame, not baked.
             StringAssert.Contains("Blend shape weights are deliberately not observed", observer);
+        }
+
+        [Test]
+        public void PreviewInputObserver_DoesNotRebuildOnBonePoseEdits()
+        {
+            var observer = ReadPreviewSource("PreviewInputObserver.cs");
+
+            StringAssert.Contains("Bone TRS is pose state, not assembly input", observer);
+            StringAssert.Contains("BoneStructureToken", observer);
+            StringAssert.Contains("Do not poll localPosition/localRotation/localScale here", observer);
+            StringAssert.Contains("BoneStructures", observer);
+            StringAssert.Contains("generic transform observation", observer);
+        }
+
+        [Test]
+        public void PlayModePrebuild_UsesEditorTransitionGateBeforeAwake()
+        {
+            var source = ReadNdmfSource("ApaPlayModeCompatibility.cs");
+
+            StringAssert.Contains("EditorApplication.isPlayingOrWillChangePlaymode", source);
+            StringAssert.Contains("early prebuild is skipped", source);
+            Assert.IsFalse(
+                source.Contains("if (!Application.isPlaying) return;"),
+                "The temporary Play Mode scene may be processed before Application.isPlaying flips true.");
+        }
+
+        [Test]
+        public void FinalBoneTable_PrefersAuthoredSourceBindPoses()
+        {
+            var source = ReadEditorSource("Assembly", "FinalBoneTable.cs");
+
+            StringAssert.Contains("sourceBindPose * targetToSource", source);
+            StringAssert.Contains("legacy snapshots", source);
+            StringAssert.Contains("ComputeBindPose", source);
+        }
+
+        [Test]
+        public void PlayModeFingerprint_IsValidatedBeforeArmatureMerge()
+        {
+            var merge = ReadNdmfSource("ApaMergeArmaturePass.cs");
+            var assembly = ReadNdmfSource("ApaAssemblyPass.cs");
+
+            StringAssert.Contains("ValidatePartMeshBeforeMerge", merge);
+            StringAssert.Contains("CompatibilityRule.ValidatePartMeshFingerprint", merge);
+            StringAssert.Contains("partMeshFingerprintsVerifiedBeforeMerge: true", assembly);
         }
 
         [Test]

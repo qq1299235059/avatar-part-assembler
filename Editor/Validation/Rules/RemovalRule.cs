@@ -130,24 +130,6 @@ namespace AvatarPartAssembler.Editor
                 var removed = part.RemovedTriangles;
                 if (removed == null || removed.Count == 0) continue;
 
-                if (part.ConflictPriority < 0)
-                {
-                    if (issues != null)
-                    {
-                        issues.Add(ValidationIssue.Error(
-                            ApaErrorCode.InvalidConflictPriority,
-                            ApaIssuePhase.Removal,
-                            "Part '" + part.PartId + "' declares conflict priority " + part.ConflictPriority +
-                            ". Zero means \"not declared\"; a negative value is not a weaker claim, it is " +
-                            "outside the defined domain. Use a positive value, or zero to declare nothing.",
-                            part.PartId,
-                            part.ConflictPriority,
-                            detail: "reason=negative-conflict-priority; priority=" + part.ConflictPriority));
-                    }
-
-                    continue;
-                }
-
                 for (var i = 0; i < removed.Count; i++)
                 {
                     var address = removed[i];
@@ -160,27 +142,16 @@ namespace AvatarPartAssembler.Editor
                         claims.Add(address, list);
                     }
 
-                    list.Add(new RemovalClaim(part.PartId, part.ConflictPriority));
+                    // Legacy conflict priorities are no longer part of the snapshot. Keep a zero-valued claim
+                    // so overlap diagnostics retain their stable shape and continue to fail closed.
+                    list.Add(new RemovalClaim(part.PartId, 0));
                 }
             }
 
             return claims;
         }
 
-        /// <summary>
-        /// Decides who owns one base triangle, which is the same decision the diagnostics and the plan read.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// A contest is resolvable only when every claimant declares a priority and the highest one is unique. A
-        /// single claimant owns its triangle outright.
-        /// </para>
-        /// <para>
-        /// <paramref name="ownerPartId"/> and <paramref name="ownerPriority"/> always name the highest-priority
-        /// claimant, including when the contest is unresolved: that is the claimant a diagnostic should anchor
-        /// on, and it keeps the reported part id identical whether or not the contest resolved.
-        /// </para>
-        /// </remarks>
+        /// <summary>Decides whether one or more parts claim the same base triangle.</summary>
         private static OverlapOutcome DecideOwner(
             List<RemovalClaim> claims,
             out string ownerPartId,
@@ -191,36 +162,9 @@ namespace AvatarPartAssembler.Editor
 
             if (claims == null || claims.Count == 0) return OverlapOutcome.Resolved;
 
-            var undeclared = false;
-            var highest = int.MinValue;
-            var highestCount = 0;
-            var highestPartId = string.Empty;
-
-            for (var i = 0; i < claims.Count; i++)
-            {
-                var claim = claims[i];
-                if (claim.Priority == 0) undeclared = true;
-
-                if (claim.Priority > highest)
-                {
-                    highest = claim.Priority;
-                    highestCount = 1;
-                    highestPartId = claim.PartId;
-                }
-                else if (claim.Priority == highest)
-                {
-                    highestCount++;
-                }
-            }
-
-            ownerPartId = highestPartId;
-            ownerPriority = highest;
-
+            ownerPartId = claims[0].PartId;
             if (claims.Count == 1) return OverlapOutcome.Resolved;
-            if (undeclared) return OverlapOutcome.UnresolvedUndeclaredPriority;
-            if (highestCount > 1) return OverlapOutcome.UnresolvedPriorityTie;
-
-            return OverlapOutcome.Resolved;
+            return OverlapOutcome.UnresolvedUndeclaredPriority;
         }
 
         /// <summary>

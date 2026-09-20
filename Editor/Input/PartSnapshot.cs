@@ -284,7 +284,7 @@ namespace AvatarPartAssembler.Editor
     }
 
     /// <summary>
-    /// The immutable policy axes a part profile contributes to conflict resolution and to the merge generator.
+    /// The immutable non-identity policy axes a part profile contributes to the merge generator.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -311,10 +311,10 @@ namespace AvatarPartAssembler.Editor
             string.Empty,
             string.Empty);
 
-        /// <summary>Whether the part replaces its body slot or augments it.</summary>
+        /// <summary>Legacy slot mode; always the strict default and ignored by current validation.</summary>
         public ApaPartSlotMode SlotMode { get; }
 
-        /// <summary>Declared conflict priority. Zero means "not declared" and is inert.</summary>
+        /// <summary>Legacy conflict priority; always zero for current snapshots.</summary>
         public int ConflictPriority { get; }
 
         /// <summary>Whether a shape that exists only on this part is accepted (with zero seam deltas).</summary>
@@ -395,13 +395,12 @@ namespace AvatarPartAssembler.Editor
         {
             if (profile == null) return Default;
 
-            var identity = profile.IdentityOrNull;
             var bones = profile.BonesOrNull;
             var blendShapes = profile.BlendShapesOrNull;
 
             return new PartPolicySnapshot(
-                identity != null ? identity.SlotMode : ApaPartSlotMode.Replace,
-                identity != null ? identity.ConflictPriority : 0,
+                ApaPartSlotMode.Replace,
+                0,
                 blendShapes == null || blendShapes.AllowPartOnlyShapes,
                 bones != null ? bones.MergePrefix : string.Empty,
                 bones != null ? bones.MergeSuffix : string.Empty,
@@ -431,6 +430,12 @@ namespace AvatarPartAssembler.Editor
 
         /// <summary>The part's mesh data.</summary>
         public MeshSnapshot Mesh { get; }
+
+        /// <summary>
+        /// Content fingerprint captured in the owning profile for this part mesh, or empty when the profile
+        /// predates schema 5 and has not been recaptured yet.
+        /// </summary>
+        public string ProfileMeshFingerprint { get; }
 
         /// <summary>Transforms needed to place the part's data into shared spaces.</summary>
         public SpaceTransforms Transforms { get; }
@@ -479,11 +484,11 @@ namespace AvatarPartAssembler.Editor
         /// </remarks>
         public Renderer SourceRenderer { get; }
 
-        /// <summary>Whether this part replaces or augments its declared slot.</summary>
-        public ApaPartSlotMode SlotMode => Policy.SlotMode;
+        /// <summary>Legacy slot mode projection; always Replace.</summary>
+        public ApaPartSlotMode SlotMode => ApaPartSlotMode.Replace;
 
-        /// <summary>Declared conflict priority; zero is inert.</summary>
-        public int ConflictPriority => Policy.ConflictPriority;
+        /// <summary>Legacy conflict-priority projection; always zero.</summary>
+        public int ConflictPriority => 0;
 
         /// <summary>Whether a shape that exists only on this part is accepted.</summary>
         public bool AllowPartOnlyShapes => Policy.AllowPartOnlyShapes;
@@ -496,6 +501,11 @@ namespace AvatarPartAssembler.Editor
         /// <param name="sourceRenderer">
         /// The live renderer this part's geometry was captured from, or null when the snapshot was built without
         /// one. See <see cref="SourceRenderer"/> for why the caller must pass the reference the capture used.
+        /// </param>
+        /// <param name="profileMeshFingerprint">
+        /// The serialized fingerprint of the part mesh, or null/empty when no profile value is available. The
+        /// optional parameter preserves the pure-core constructor contract used by existing fixtures; build and
+        /// authoring capture paths pass the profile value explicitly.
         /// </param>
         public PartSnapshot(
             string partId,
@@ -510,7 +520,8 @@ namespace AvatarPartAssembler.Editor
             ApaSeamProfile seam,
             IReadOnlyList<Material> rendererMaterials,
             PartPolicySnapshot policy = null,
-            Renderer sourceRenderer = null)
+            Renderer sourceRenderer = null,
+            string profileMeshFingerprint = null)
         {
             PartId = partId ?? string.Empty;
             DisplayName = displayName ?? string.Empty;
@@ -525,12 +536,13 @@ namespace AvatarPartAssembler.Editor
             RendererMaterials = rendererMaterials ?? Array.Empty<Material>();
             Policy = policy ?? PartPolicySnapshot.Default;
             SourceRenderer = sourceRenderer;
+            ProfileMeshFingerprint = profileMeshFingerprint ?? string.Empty;
         }
     }
 
     /// <summary>
-    /// The immutable key that fixes the order in which parts are processed: the one authoritative comparator
-    /// for part, installer, UV-source, and material-source ordering.
+    /// The immutable key that fixes the order in which parts are processed.
+    /// Only the stable part id and installer path participate in ordering; legacy policy fields are ignored.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -562,22 +574,16 @@ namespace AvatarPartAssembler.Editor
     /// </remarks>
     public struct PartOrderingKey : IComparable<PartOrderingKey>, IEquatable<PartOrderingKey>
     {
-        /// <summary>
-        /// Declared conflict priority; the coarsest ordering component, ordered descending so a higher priority
-        /// is processed first. Zero is inert.
-        /// </summary>
+        /// <summary>Legacy conflict-priority field retained for source compatibility; ignored by comparison.</summary>
         public int EffectivePriority;
 
-        /// <summary>Declared slot; ordered ascending.</summary>
+        /// <summary>Legacy slot field retained for source compatibility; ignored by comparison.</summary>
         public ApaPartSlot Slot;
 
         /// <summary>Stable part id.</summary>
         public string PartId;
 
-        /// <summary>
-        /// Human-readable part name, the tiebreaker between two parts that resolve to the same slot and the same
-        /// stable part id. Empty when the caller has no display name to supply.
-        /// </summary>
+        /// <summary>Legacy display-name field retained for source compatibility; ignored by comparison.</summary>
         public string DisplayName;
 
         /// <summary>
@@ -585,6 +591,12 @@ namespace AvatarPartAssembler.Editor
         /// avatar root records <see cref="ApaAvatarPath.Root"/>.
         /// </summary>
         public string InstallerPath;
+
+        /// <summary>Builds the active ordering key from the stable part id and installer path.</summary>
+        public PartOrderingKey(string partId, string installerPath)
+            : this(0, ApaPartSlot.Custom, partId, string.Empty, installerPath)
+        {
+        }
 
         /// <summary>Builds a key with no declared priority, which is the schema-2 key.</summary>
         public PartOrderingKey(ApaPartSlot slot, string partId, string installerPath)
@@ -616,30 +628,15 @@ namespace AvatarPartAssembler.Editor
         /// <inheritdoc />
         public int CompareTo(PartOrderingKey other)
         {
-            // Descending: a higher declared priority is ordered first, so the part that owns an overlap is also
-            // the part whose claims are processed first.
-            var c = other.EffectivePriority.CompareTo(EffectivePriority);
+            var c = string.CompareOrdinal(PartId ?? string.Empty, other.PartId ?? string.Empty);
             if (c != 0) return c;
-
-            c = ((int)Slot).CompareTo((int)other.Slot);
-            if (c != 0) return c;
-
-            c = string.CompareOrdinal(PartId ?? string.Empty, other.PartId ?? string.Empty);
-            if (c != 0) return c;
-
-            c = string.CompareOrdinal(DisplayName ?? string.Empty, other.DisplayName ?? string.Empty);
-            if (c != 0) return c;
-
             return string.CompareOrdinal(InstallerPath ?? string.Empty, other.InstallerPath ?? string.Empty);
         }
 
         /// <inheritdoc />
         public bool Equals(PartOrderingKey other)
         {
-            return EffectivePriority == other.EffectivePriority
-                   && Slot == other.Slot
-                   && string.Equals(PartId ?? string.Empty, other.PartId ?? string.Empty, StringComparison.Ordinal)
-                   && string.Equals(DisplayName ?? string.Empty, other.DisplayName ?? string.Empty, StringComparison.Ordinal)
+            return string.Equals(PartId ?? string.Empty, other.PartId ?? string.Empty, StringComparison.Ordinal)
                    && string.Equals(InstallerPath ?? string.Empty, other.InstallerPath ?? string.Empty, StringComparison.Ordinal);
         }
 
@@ -651,10 +648,7 @@ namespace AvatarPartAssembler.Editor
         {
             unchecked
             {
-                var hash = EffectivePriority;
-                hash = (hash * 397) ^ (int)Slot;
-                hash = (hash * 397) ^ (PartId != null ? PartId.GetHashCode() : 0);
-                hash = (hash * 397) ^ (DisplayName != null ? DisplayName.GetHashCode() : 0);
+                var hash = PartId != null ? PartId.GetHashCode() : 0;
                 hash = (hash * 397) ^ (InstallerPath != null ? InstallerPath.GetHashCode() : 0);
                 return hash;
             }
@@ -663,7 +657,7 @@ namespace AvatarPartAssembler.Editor
         /// <inheritdoc />
         public override string ToString()
         {
-            return EffectivePriority + "/" + Slot + "/" + PartId + "/" + DisplayName + " @" + InstallerPath;
+            return PartId + " @" + InstallerPath;
         }
     }
 
@@ -708,11 +702,9 @@ namespace AvatarPartAssembler.Editor
         /// The final renderer's <c>localToWorldMatrix</c>, captured with the mesh.
         /// </summary>
         /// <remarks>
-        /// This is the renderer half of the bind-pose formula
-        /// <c>finalBone.worldToLocalMatrix * finalRenderer.localToWorldMatrix</c> (section 45). It is captured
-        /// rather than read from <see cref="Transforms"/> at build time so that the bind pose is computed from
-        /// the same pair of matrices the vertices were captured against, and so that a context can be built
-        /// without a live scene.
+        /// This is the captured renderer relation retained for legacy snapshots that do not carry source bind
+        /// poses. Normal Unity captures use the mesh's authored bind pose and convert it through
+        /// <see cref="Transforms"/> so that a current live bone pose is never treated as the new bind pose.
         /// </remarks>
         public Matrix4x4 RendererLocalToWorld { get; }
 

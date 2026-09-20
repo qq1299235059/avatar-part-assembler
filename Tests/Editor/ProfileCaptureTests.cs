@@ -177,7 +177,7 @@ namespace AvatarPartAssembler.Tests.Authoring
         [Test]
         public void DescribeMissing_ListsTheAbsentSafetyFields()
         {
-            Assert.AreEqual("capture flag, vertex count, submesh index counts, submesh topologies",
+            Assert.AreEqual("capture flag, vertex count, submesh index counts, submesh topologies, mesh fingerprint",
                 ApaCompatibilityCapture.DescribeMissing(new ApaAvatarCompatibilityProfile()));
         }
 

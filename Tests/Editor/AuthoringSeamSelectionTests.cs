@@ -405,6 +405,21 @@ namespace AvatarPartAssembler.Tests.Authoring
             Assert.AreEqual(ApaErrorCode.InvalidEpsilon, badTolerance.Issue.Code);
             StringAssert.Contains("reason=invalid-seam-tolerance", badTolerance.Issue.Detail);
 
+            var tooLoose = ApaSeamWorldMatcher.Match(
+                targetRenderer, targetMesh, partRenderer, partMesh,
+                ApaSeamWorldMatcher.MaximumTolerance * 2f);
+            Assert.IsFalse(tooLoose.Succeeded);
+            Assert.AreEqual(ApaErrorCode.InvalidEpsilon, tooLoose.Issue.Code);
+            StringAssert.Contains("reason=seam-tolerance-too-large", tooLoose.Issue.Detail);
+
+            var candidateFailure = ApaSeamWorldMatcher.Match(
+                targetRenderer, targetMesh, partRenderer, partMesh,
+                ApaSeamWorldMatcher.DefaultTolerance,
+                new[] { 0, 0 }, new[] { 0 });
+            Assert.IsFalse(candidateFailure.Succeeded);
+            Assert.AreEqual(ApaErrorCode.InvalidSeamSelection, candidateFailure.Issue.Code);
+            StringAssert.Contains("reason=duplicate-candidate-index", candidateFailure.Issue.Detail);
+
             var missingPart = ApaSeamWorldMatcher.Match(
                 targetRenderer,
                 targetMesh,

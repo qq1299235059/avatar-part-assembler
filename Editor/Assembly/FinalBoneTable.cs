@@ -45,7 +45,9 @@ namespace AvatarPartAssembler.Editor
 
         /// <summary>
         /// The final bind pose, computed as
-        /// <c>bone.worldToLocalMatrix * renderer.localToWorldMatrix</c>.
+        /// <c>sourceBindPose * sourceToTargetLocal.inverse</c> when the source mesh carries bind poses. This
+        /// keeps an edited live pose from becoming a new bind pose. Legacy snapshots without source bind poses
+        /// use <c>bone.worldToLocalMatrix * renderer.localToWorldMatrix</c> as a compatibility fallback.
         /// </summary>
         public Matrix4x4 BindPose { get; }
 
@@ -306,6 +308,7 @@ namespace AvatarPartAssembler.Editor
             if (!HasSkinningInputs(context)) return null;
 
             var rendererLocalToWorld = context.Base.RendererLocalToWorld;
+            var baseSourceToTarget = context.Base.Transforms.SourceToTargetLocal();
             var baseMesh = context.Base.Mesh;
 
             var bones = new List<FinalBone>();
@@ -317,8 +320,8 @@ namespace AvatarPartAssembler.Editor
                 indexByPath,
                 baseMesh,
                 string.Empty,
-                string.Empty,
                 rendererLocalToWorld,
+                baseSourceToTarget,
                 context.NumericPolicy,
                 issues);
 
@@ -332,6 +335,7 @@ namespace AvatarPartAssembler.Editor
                 baseMesh,
                 context.Parts,
                 rendererLocalToWorld,
+                baseSourceToTarget,
                 context.NumericPolicy,
                 issues);
 
@@ -369,8 +373,8 @@ namespace AvatarPartAssembler.Editor
                     indexByPath,
                     part.Mesh,
                     part.PartId,
-                    part.DisplayName,
                     rendererLocalToWorld,
+                    part.Transforms.SourceToTargetLocal(),
                     context.NumericPolicy,
                     issues,
                     redirected);
@@ -494,8 +498,8 @@ namespace AvatarPartAssembler.Editor
             Dictionary<string, int> indexByPath,
             MeshSnapshot mesh,
             string partId,
-            string displayName,
             Matrix4x4 rendererLocalToWorld,
+            Matrix4x4 sourceToTargetLocal,
             ApaNumericPolicy policy,
             List<ValidationIssue> issues,
             List<BoneRedirect> redirectedToTarget = null)
@@ -524,7 +528,7 @@ namespace AvatarPartAssembler.Editor
                     issues.Add(ValidationIssue.Error(
                         ApaErrorCode.BoneHierarchyConflict,
                         ApaIssuePhase.Attributes,
-                        "Bone " + i + " of " + DescribeSource(partId, displayName) +
+                        "Bone " + i + " of " + DescribeSource(partId) +
                         " carries weight but has no armature-relative path, so it has no stable identity to " +
                         "remap bone weights onto. A null bone entry in the renderer's bone list, or a bone " +
                         "outside the armature selected for this source, is the usual cause.",
@@ -540,7 +544,7 @@ namespace AvatarPartAssembler.Editor
                     issues.Add(ValidationIssue.Error(
                         ApaErrorCode.BoneHierarchyConflict,
                         ApaIssuePhase.Attributes,
-                        "Bone " + i + " of " + DescribeSource(partId, displayName) + " repeats the identity '" +
+                        "Bone " + i + " of " + DescribeSource(partId) + " repeats the identity '" +
                         path + "' already used by bone " + earlier + " of the same source. Two bones with one " +
                         "identity cannot be told apart when a weight is remapped.",
                         partId,
@@ -562,7 +566,7 @@ namespace AvatarPartAssembler.Editor
                     issues.Add(ValidationIssue.Error(
                         ApaErrorCode.InvalidBindPose,
                         ApaIssuePhase.Attributes,
-                        "Bone " + i + " ('" + path + "') of " + DescribeSource(partId, displayName) +
+                        "Bone " + i + " ('" + path + "') of " + DescribeSource(partId) +
                         " has no usable world-to-local transform, so its bind pose cannot be computed. A destroy" +
                         "ed or missing bone transform is the usual cause.",
                         partId,
@@ -572,14 +576,19 @@ namespace AvatarPartAssembler.Editor
                     continue;
                 }
 
-                var bindPose = worldToLocal * rendererLocalToWorld;
+                var bindPose = ComputeBindPose(
+                    mesh,
+                    i,
+                    sourceToTargetLocal,
+                    worldToLocal,
+                    rendererLocalToWorld);
                 if (!IsUsableTransform(bindPose))
                 {
                     issues.Add(ValidationIssue.Error(
                         ApaErrorCode.InvalidBindPose,
                         ApaIssuePhase.Attributes,
                         "The bind pose computed for bone " + i + " ('" + path + "') of " +
-                        DescribeSource(partId, displayName) +
+                        DescribeSource(partId) +
                         " is not a usable matrix. The bone transform and the renderer transform do not combine " +
                         "into a valid bind pose.",
                         partId,
@@ -663,6 +672,7 @@ namespace AvatarPartAssembler.Editor
             MeshSnapshot baseMesh,
             IReadOnlyList<PartSnapshot> parts,
             Matrix4x4 rendererLocalToWorld,
+            Matrix4x4 sourceToTargetLocal,
             ApaNumericPolicy policy,
             List<ValidationIssue> issues)
         {
@@ -726,7 +736,12 @@ namespace AvatarPartAssembler.Editor
                     continue;
                 }
 
-                var bindPose = worldToLocal * rendererLocalToWorld;
+                var bindPose = ComputeBindPose(
+                    baseMesh,
+                    i,
+                    sourceToTargetLocal,
+                    worldToLocal,
+                    rendererLocalToWorld);
                 if (!IsUsableTransform(bindPose))
                 {
                     issues.Add(ValidationIssue.Error(
@@ -751,6 +766,33 @@ namespace AvatarPartAssembler.Editor
             }
 
             return ok;
+        }
+
+        /// <summary>
+        /// Computes a bind pose that is stable across live pose edits. A source mesh's bind pose describes the
+        /// source renderer and its authored rest pose; when the source vertices are written into the target
+        /// renderer's local space, the inverse source-to-target matrix converts that bind pose into the final
+        /// vertex basis. The live bone matrix is only a compatibility fallback for hand-built/legacy snapshots
+        /// that predate captured bind poses.
+        /// </summary>
+        private static Matrix4x4 ComputeBindPose(
+            MeshSnapshot mesh,
+            int boneIndex,
+            Matrix4x4 sourceToTargetLocal,
+            Matrix4x4 worldToLocal,
+            Matrix4x4 rendererLocalToWorld)
+        {
+            if (mesh != null && boneIndex >= 0 && boneIndex < mesh.SkinBindPoses.Count)
+            {
+                var sourceBindPose = mesh.SkinBindPoses[boneIndex];
+                if (IsUsableTransform(sourceBindPose) && IsUsableTransform(sourceToTargetLocal))
+                {
+                    var targetToSource = sourceToTargetLocal.inverse;
+                    if (IsUsableTransform(targetToSource)) return sourceBindPose * targetToSource;
+                }
+            }
+
+            return worldToLocal * rendererLocalToWorld;
         }
 
         /// <summary>
@@ -985,15 +1027,15 @@ namespace AvatarPartAssembler.Editor
                         "; paths=" + sample);
         }
 
-        private static string DescribeSource(string partId, string displayName)
+        private static string DescribeSource(string partId)
         {
             if (string.IsNullOrEmpty(partId)) return "the target body";
-            return string.IsNullOrEmpty(displayName) ? "'" + partId + "'" : "'" + displayName + "'";
+            return "'" + partId + "'";
         }
 
         private static string DescribePart(PartSnapshot part)
         {
-            return string.IsNullOrEmpty(part.DisplayName) ? "'" + part.PartId + "'" : "'" + part.DisplayName + "'";
+            return "'" + (part != null ? part.PartId : string.Empty) + "'";
         }
 
         private static string MeshName(MeshSnapshot mesh)
@@ -1187,7 +1229,7 @@ namespace AvatarPartAssembler.Editor
 
         private static string DescribePart(PartSnapshot part)
         {
-            return string.IsNullOrEmpty(part.DisplayName) ? "'" + part.PartId + "'" : "'" + part.DisplayName + "'";
+            return "'" + (part != null ? part.PartId : string.Empty) + "'";
         }
 
         private static string MeshName(MeshSnapshot mesh)

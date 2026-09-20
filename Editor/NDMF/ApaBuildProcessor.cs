@@ -45,19 +45,62 @@ namespace AvatarPartAssembler.Editor.Ndmf
         /// </summary>
         public bool AllowPostMergePartArmatureScope { get; }
 
+        /// <summary>
+        /// True only for the NDMF path whose Generating pass validated each part mesh before Modular Avatar
+        /// rewrote its skinning data. The post-merge context then skips a duplicate part-fingerprint comparison.
+        /// </summary>
+        public bool PartMeshFingerprintsVerifiedBeforeMerge { get; }
+
         /// <summary>Creates a request.</summary>
         public ApaBuildRequest(
             GameObject avatarRoot,
             IReadOnlyList<AvatarPartInstaller> installers = null,
             ApaNumericPolicy numericPolicy = null,
             IObjectRegistry objectRegistry = null,
-            bool allowPostMergePartArmatureScope = false)
+            bool allowPostMergePartArmatureScope = false,
+            bool partMeshFingerprintsVerifiedBeforeMerge = false)
         {
             AvatarRoot = avatarRoot;
             Installers = installers;
             NumericPolicy = numericPolicy;
             ObjectRegistry = objectRegistry;
             AllowPostMergePartArmatureScope = allowPostMergePartArmatureScope;
+            PartMeshFingerprintsVerifiedBeforeMerge = partMeshFingerprintsVerifiedBeforeMerge;
+        }
+    }
+
+    /// <summary>
+    /// One consumed part renderer object and the target renderer object its geometry was assembled into.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both members are the live GameObjects of the build clone. <see cref="Source"/> is the object the consumed
+    /// renderer component lived on — the object an author's animation (a blend-shape curve on the part renderer,
+    /// for instance) addresses — and <see cref="Target"/> is the object of the group's target renderer, which
+    /// survives the run. The pair is captured <i>before</i> the run destroys the source renderer, because a
+    /// destroyed component can no longer be asked for its GameObject.
+    /// </para>
+    /// <para>
+    /// The pair is what NDMF's <c>AnimatorServicesContext.ObjectPathRemapper.ReplaceObject</c> is called with, so
+    /// a recorded animation path that pointed at the consumed part renderer follows the geometry into the target
+    /// renderer. It is an identity record: the target object outlives the run, and the source object may be
+    /// removed afterwards if it is left empty (see <see cref="ApaSourceObjectCleanup"/>). Only pairs whose two
+    /// objects are alive and different are recorded; a null or identical pair is not a mapping and is skipped.
+    /// </para>
+    /// </remarks>
+    public sealed class ApaRendererReplacement
+    {
+        /// <summary>The consumed part renderer's GameObject. Never null in a recorded pair.</summary>
+        public GameObject Source { get; }
+
+        /// <summary>The target renderer's GameObject the part's geometry was assembled into. Never null.</summary>
+        public GameObject Target { get; }
+
+        /// <summary>Creates a pair.</summary>
+        public ApaRendererReplacement(GameObject source, GameObject target)
+        {
+            Source = source;
+            Target = target;
         }
     }
 
@@ -138,6 +181,7 @@ namespace AvatarPartAssembler.Editor.Ndmf
         private static readonly ApaBuildGroupResult[] s_noGroups = new ApaBuildGroupResult[0];
         private static readonly AvatarPartInstaller[] s_noInstallers = new AvatarPartInstaller[0];
         private static readonly Renderer[] s_noRenderers = new Renderer[0];
+        private static readonly ApaRendererReplacement[] s_noReplacements = new ApaRendererReplacement[0];
 
         /// <summary>True when there was nothing to do: the avatar has no enabled installer.</summary>
         public bool NothingToDo { get; }
@@ -164,6 +208,25 @@ namespace AvatarPartAssembler.Editor.Ndmf
         public IReadOnlyList<Renderer> ConsumedRenderers { get; }
 
         /// <summary>
+        /// The consumed part renderer objects and the target renderer objects they were assembled into.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Captured while both objects are still alive, because the consumed renderer components are destroyed by
+        /// the time this result exists. One pair per consumed renderer that contributed to a target group, in
+        /// group-key order and then discovery order, with null and identical pairs skipped and a repeated source
+        /// object recorded once.
+        /// </para>
+        /// <para>
+        /// The build pass records this list in the transient build state; the animator-retarget step hands each
+        /// pair to NDMF's object path remapper, and the cleanup step removes a source object that the run left
+        /// empty. A caller outside a build (the preview, or a direct processor call) may ignore it: it is a set of
+        /// identities, and neither member is dereferenced by this result.
+        /// </para>
+        /// </remarks>
+        public IReadOnlyList<ApaRendererReplacement> RetargetMappings { get; }
+
+        /// <summary>
         /// The object references <see cref="Issues"/> point at, resolved before anything was mutated.
         /// </summary>
         /// <remarks>
@@ -179,7 +242,8 @@ namespace AvatarPartAssembler.Editor.Ndmf
             IReadOnlyList<ApaBuildGroupResult> groups,
             IReadOnlyList<AvatarPartInstaller> consumedInstallers,
             IReadOnlyList<Renderer> consumedRenderers,
-            ApaDiagnosticReferences references)
+            ApaDiagnosticReferences references,
+            IReadOnlyList<ApaRendererReplacement> retargetMappings)
         {
             NothingToDo = nothingToDo;
             Succeeded = succeeded;
@@ -188,16 +252,17 @@ namespace AvatarPartAssembler.Editor.Ndmf
             ConsumedInstallers = consumedInstallers ?? s_noInstallers;
             ConsumedRenderers = consumedRenderers ?? s_noRenderers;
             References = references ?? ApaDiagnosticReferences.Empty;
+            RetargetMappings = retargetMappings ?? s_noReplacements;
         }
 
         /// <summary>No enabled installer was found, so nothing was validated and nothing was touched.</summary>
         public static readonly ApaBuildResult NoWork = new ApaBuildResult(
-            true, false, ValidationResult.Empty, null, null, null, null);
+            true, false, ValidationResult.Empty, null, null, null, null, null);
 
         /// <summary>The run stopped before producing a mesh. The issues explain why.</summary>
         public static ApaBuildResult Failure(ValidationResult issues, ApaDiagnosticReferences references = null)
         {
-            return new ApaBuildResult(false, false, issues, null, null, null, references);
+            return new ApaBuildResult(false, false, issues, null, null, null, references, null);
         }
 
         /// <summary>The run produced one mesh per group and wrote each to its target renderer.</summary>
@@ -206,10 +271,11 @@ namespace AvatarPartAssembler.Editor.Ndmf
             ValidationResult issues,
             IReadOnlyList<AvatarPartInstaller> consumedInstallers,
             IReadOnlyList<Renderer> consumedRenderers,
-            ApaDiagnosticReferences references = null)
+            ApaDiagnosticReferences references = null,
+            IReadOnlyList<ApaRendererReplacement> retargetMappings = null)
         {
             return new ApaBuildResult(
-                false, true, issues, groups, consumedInstallers, consumedRenderers, references);
+                false, true, issues, groups, consumedInstallers, consumedRenderers, references, retargetMappings);
         }
     }
 
@@ -246,6 +312,9 @@ namespace AvatarPartAssembler.Editor.Ndmf
     /// <item><description>
     /// <b>Consume last.</b> Only after every group is written are the consumed part renderers and installer
     /// components removed, so a failure can never remove geometry while leaving the assembled mesh unwritten.
+    /// The source objects and their group's target objects are captured as identity pairs immediately before that
+    /// removal (<see cref="ApaBuildResult.RetargetMappings"/>): the renderer components are gone afterwards, and
+    /// the animation-retarget step that runs later in the build needs the objects, not the components.
     /// </description></item>
     /// </list>
     /// <para>
@@ -291,7 +360,8 @@ namespace AvatarPartAssembler.Editor.Ndmf
                 avatarRoot,
                 policy,
                 out var planningIssues,
-                request.AllowPostMergePartArmatureScope);
+                request.AllowPostMergePartArmatureScope,
+                request.PartMeshFingerprintsVerifiedBeforeMerge);
             var groupPlan = ValidationResult.Build(planningIssues);
 
             if (planned.NotApplicable)
@@ -418,6 +488,13 @@ namespace AvatarPartAssembler.Editor.Ndmf
                     groupInstallers));
             }
 
+            // The source objects and their group's target objects are captured here, while both are still alive:
+            // the renderer components are destroyed immediately below, and a destroyed component can no longer be
+            // asked for its GameObject. The pairs are what the animator-retarget step hands to NDMF's object path
+            // remapper and what the cleanup step inspects, so they have to be identities, not component
+            // references. See ApaRendererReplacement.
+            var retargetMappings = CaptureRendererReplacements(groupResults);
+
             // Consumption happens only after every assignment succeeded, so a failure can never remove the part
             // geometry while leaving the assembled mesh unwritten. Only the component is destroyed: bones,
             // children, and any other object under the part root are left alone, because the generated mesh may
@@ -438,7 +515,72 @@ namespace AvatarPartAssembler.Editor.Ndmf
                 MergeIssues(new List<ValidationIssue>(discoveryIssues), assemblyIssues, consumptionIssues),
                 consumedInstallers,
                 consumedRenderers,
-                references);
+                references,
+                retargetMappings);
+        }
+
+        /// <summary>
+        /// The source→target object pairs of a successful run, captured before the source renderers are destroyed.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Every consumed renderer of a group maps to that group's own target renderer object, which is where the
+        /// group's mesh was written. A pair whose source or target object is missing, or whose two objects are
+        /// the same object, is not a mapping and is skipped: there is nothing for the remapper to move, and
+        /// recording it would only make the cleanup step consider an object that was never replaced. A source
+        /// object that appears twice — a renderer reachable from two groups' consumption sets — is recorded once,
+        /// against the first group that claimed it, so the remapper is never asked to move the same object twice.
+        /// </para>
+        /// <para>
+        /// The result is a fresh list in group-key order and then discovery order, so a build's mapping set is
+        /// deterministic and does not depend on hash or scan order.
+        /// </para>
+        /// <para>
+        /// Public because it is the capture seam: it is a pure function over the run's own result values, so the
+        /// mapping rule can be asserted against real objects without standing up an NDMF build, exactly as the
+        /// build's other public contracts are.
+        /// </para>
+        /// </remarks>
+        public static List<ApaRendererReplacement> CaptureRendererReplacements(
+            IReadOnlyList<ApaBuildGroupResult> groups)
+        {
+            var result = new List<ApaRendererReplacement>();
+            if (groups == null) return result;
+
+            for (var g = 0; g < groups.Count; g++)
+            {
+                var group = groups[g];
+                if (group == null) continue;
+
+                var target = group.TargetRenderer != null ? group.TargetRenderer.gameObject : null;
+                if (target == null) continue;
+
+                var sources = group.ConsumedRenderers;
+                for (var r = 0; r < sources.Count; r++)
+                {
+                    var renderer = sources[r];
+                    if (renderer == null) continue;
+
+                    var source = renderer.gameObject;
+                    if (source == null || source == target) continue;
+                    if (ContainsSource(result, source)) continue;
+
+                    result.Add(new ApaRendererReplacement(source, target));
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>True when a pair for this source object has already been captured.</summary>
+        private static bool ContainsSource(List<ApaRendererReplacement> pairs, GameObject source)
+        {
+            for (var i = 0; i < pairs.Count; i++)
+            {
+                if (pairs[i].Source == source) return true;
+            }
+
+            return false;
         }
 
         /// <summary>One group's resolved write target and the geometry it replaces.</summary>

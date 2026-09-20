@@ -35,12 +35,20 @@ namespace AvatarPartAssembler.Editor.Ndmf
     /// Generating pass executed; the assembly pass blocks a build in which it did not, because the empty
     /// configuration list would otherwise satisfy the postcondition trivially. See <see cref="Configured"/>.
     /// </para>
+    /// <para>
+    /// <b>The same state carries what the assembly consumed.</b> <see cref="RendererReplacements"/> records the
+    /// consumed part renderer objects and their group's target renderer objects, captured before the renderer
+    /// components were destroyed. The steps that run after the assembly — retargeting recorded animation paths
+    /// onto the target renderer and removing a source object left empty — read that ledger instead of re-deriving
+    /// the mapping from a hierarchy the run has already rewritten.
+    /// </para>
     /// </remarks>
     internal sealed class ApaTransientArtifacts
     {
         private readonly List<Component> _mergeConfigurations = new List<Component>();
         private readonly List<string> _partIds = new List<string>();
         private readonly List<Transform> _partTopBones = new List<Transform>();
+        private readonly List<ApaRendererReplacement> _rendererReplacements = new List<ApaRendererReplacement>();
 
         /// <summary>
         /// True once the Generating pass has run far enough to declare that it configured this build, whether or
@@ -89,6 +97,45 @@ namespace AvatarPartAssembler.Editor.Ndmf
             _mergeConfigurations.Add(configuration);
             _partIds.Add(partId ?? string.Empty);
             _partTopBones.Add(partTopBone);
+        }
+
+        /// <summary>
+        /// The consumed part renderer objects and the target renderer objects they were assembled into.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Written by the assembly pass from <see cref="ApaBuildResult.RetargetMappings"/> after a successful run,
+        /// and read by the two steps that run later in the same build: the animator-retarget step, which hands
+        /// each pair to NDMF's object path remapper while the animator services context is live, and the cleanup
+        /// step, which removes a source object the run left empty. The list is empty on every other path, so a
+        /// build that assembled nothing maps nothing and removes nothing.
+        /// </para>
+        /// <para>
+        /// The state travels in the NDMF build context like every other artifact here, so it is per build and
+        /// cannot leak into another avatar's build or into a preview run.
+        /// </para>
+        /// </remarks>
+        internal IReadOnlyList<ApaRendererReplacement> RendererReplacements => _rendererReplacements;
+
+        /// <summary>
+        /// Records the source→target renderer object pairs a successful assembly produced.
+        /// </summary>
+        /// <remarks>
+        /// A null entry, or an entry with no source object, is dropped: it names nothing that could be retargeted
+        /// or removed. The list itself is already deduplicated by source object and ordered by the processor, so
+        /// this method preserves the order it is given rather than sorting again.
+        /// </remarks>
+        internal void RecordRendererReplacements(IReadOnlyList<ApaRendererReplacement> replacements)
+        {
+            if (replacements == null) return;
+
+            for (var i = 0; i < replacements.Count; i++)
+            {
+                var replacement = replacements[i];
+                if (replacement == null || replacement.Source == null) continue;
+
+                _rendererReplacements.Add(replacement);
+            }
         }
 
         /// <summary>

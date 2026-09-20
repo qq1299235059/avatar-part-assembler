@@ -5,7 +5,7 @@
 > **Builder 不猜，Validator 负责阻止错误资产进入构建。**
 > The builder does not guess; the validator keeps bad assets out of the build.
 
-- 版本：`0.3.0-rc.3`（发布候选，不是 1.0）
+- 版本：`0.3.0-rc.6`（发布候选，不是 1.0）
 - Unity：2022.3
 - 界面语言：English / 简体中文
 
@@ -30,7 +30,7 @@
 https://github.com/qq1299235059/avatar-part-assembler.git
 ```
 
-`package.json` 就在仓库根目录，所以不需要 `?path=` 后缀。想锁版本可以写成 `...git#v0.3.0-rc.3`。
+`package.json` 就在仓库根目录，所以不需要 `?path=` 后缀。想锁版本可以写成 `...git#v0.3.0-rc.6`。
 
 > 用 VCC / VPM 的话：本仓库没有提供 listing，请走上面的 git URL 通过 UPM 添加。
 
@@ -40,9 +40,11 @@ https://github.com/qq1299235059/avatar-part-assembler.git
 
 1. 把部件摆到与身体一致的姿态，选中部件根节点。
 2. 打开 `Tools / Avatar Part Assembler / Part Authoring`（中文菜单 `Tools / 部件装配器 / 部件编辑`）。
-3. 按窗口的 12 个 section 依次填：身份与部件槽 → 目标渲染器 → 移除区域 → 接缝配对 → UV / 材质语义 → 骨骼与形态键策略。
+3. 在窗口中分配稳定部件 ID，然后依次填：目标渲染器 → 移除区域 → 接缝配对 → UV / 材质语义 → 骨骼与形态键策略。
    - 移除区域有三种录入方式，任选其一：Scene View 拾取、数值地址、黑白遮罩纹理（固定 7 点采样规则）。
    - 接缝由 `ApaSeamWorldMatcher` 在**世界空间**生成一对一配对并写进 Profile。
+   - 若从 Blender 等来源导入了专用接缝顶点组，只把该组转换成显式候选顶点索引交给生成器；Unity 不保证任意来源的顶点组名称会随 Mesh 稳定保存。
+   - 接缝顶点的有效权重只能指向目标 Avatar 的骨骼；不要在接缝上保留部件专属或不存在于目标的权重组。
 4. 保存。所有写入都经过唯一入口 `ApaProfileWriter`，产出 `ApaPartProfile` 资产和带 `AvatarPartInstaller` 的预制体。
 
 **使用者**
@@ -58,7 +60,7 @@ https://github.com/qq1299235059/avatar-part-assembler.git
 | 接缝靠猜 | 接缝必须是 Profile 里存下来的**一对一显式配对**（`PairingVersion = ExplicitPairing`），构建期不做任何位置搜索，legacy 未配对直接报 `APA042` |
 | 构建半途炸掉 | `ApaBuildProcessor.Process` 是六步事务：前五步不改动场景，任一装配组失败则整体逆序回滚，不留半成品 |
 | 预览和上传不一致 | 预览与构建共用同一门面 `ApaCore`、同一事务、同一诊断类型，唯一差异是 `allowPostMergePartArmatureScope` |
-| 报错说不清 | APA001–APA046 / APA050 / APA999，一码一义、退役码不复用；无法恢复的字段一律硬拒绝并给出稳定 `reason=` token |
+| 报错说不清 | APA001–APA049 / APA050 / APA999，一码一义、退役码不复用；无法恢复的字段一律硬拒绝并给出稳定 `reason=` token |
 
 ## 仓库结构
 

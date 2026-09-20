@@ -6,7 +6,7 @@ using UnityEngine;
 namespace AvatarPartAssembler
 {
     /// <summary>
-    /// The physical region of the body a part replaces. Mirrors the specification's PartSlot list.
+    /// Legacy serialized slot values. Current authoring and build logic do not consume part slots.
     /// </summary>
     public enum ApaPartSlot
     {
@@ -29,9 +29,7 @@ namespace AvatarPartAssembler
         Custom = 10
     }
 
-    /// <summary>
-    /// How a part claims the body slot it declares, when more than one part claims the same non-Custom slot.
-    /// </summary>
+    /// <summary>Legacy serialized slot-mode values retained for old profile compatibility.</summary>
     /// <remarks>
     /// <para>
     /// The default <see cref="Replace"/> keeps the M2 rule: at most one part may replace a standard body region,
@@ -633,6 +631,11 @@ namespace AvatarPartAssembler
     /// block, because it cannot change which triangle a stored index refers to.
     /// </para>
     /// <para>
+    /// <b>The content fingerprint is a safety field.</b> It covers the mesh attributes the assembler reads, so
+    /// a reimport that preserves the asset GUID but changes UVs, weights, or blend-shape deltas is still detected.
+    /// A profile without one is readable for migration diagnostics but cannot be applied until it is recaptured.
+    /// </para>
+    /// <para>
     /// <b>The bone path list is a safety field whenever a source carries skinning data.</b> It is the one field
     /// whose severity depends on the configuration: with weights anywhere in the group the final bone table is
     /// rebuilt from the live hierarchy, so a part authored against a different hierarchy is merged against bones
@@ -649,6 +652,7 @@ namespace AvatarPartAssembler
         public const string GuidFastPath = "guid";
 
         [SerializeField] private string _meshGuid = string.Empty;
+        [SerializeField] private string _meshFingerprint = string.Empty;
         [SerializeField] private string _meshName = string.Empty;
         [SerializeField] private string _rendererPath = string.Empty;
         [SerializeField] private int _vertexCount = -1;
@@ -677,6 +681,16 @@ namespace AvatarPartAssembler
         {
             get => _meshGuid;
             set => _meshGuid = value ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Deterministic content fingerprint of the target mesh. Unlike <see cref="MeshGuid"/>, this changes when
+        /// a reimport changes mesh data while retaining the asset identity.
+        /// </summary>
+        public string MeshFingerprint
+        {
+            get => _meshFingerprint ?? string.Empty;
+            set => _meshFingerprint = value ?? string.Empty;
         }
 
         /// <summary>Name of the target mesh. Diagnostic fallback only.</summary>
@@ -823,6 +837,9 @@ namespace AvatarPartAssembler
         /// <summary>True when a mesh GUID was recorded for diagnostics and authoring provenance.</summary>
         public bool HasMeshGuid => !string.IsNullOrEmpty(_meshGuid);
 
+        /// <summary>True when the schema-5 content fingerprint is present.</summary>
+        public bool HasMeshFingerprint => !string.IsNullOrEmpty(_meshFingerprint);
+
         /// <summary>True when per-submesh topology was recorded by this capture.</summary>
         public bool HasSubMeshTopologies => (_subMeshTopologies?.Length ?? 0) > 0;
 
@@ -877,30 +894,25 @@ namespace AvatarPartAssembler
                    + "; blendShapes=" + (_blendShapeNames?.Length ?? 0)
                    + "; frames=" + (_blendShapeFrameCounts?.Length ?? 0)
                    + "; bones=" + (_bonePaths?.Length ?? 0)
+                   + "; fingerprint=" + (HasMeshFingerprint ? "present" : "absent")
                    + "; guid=" + (HasMeshGuid ? "present" : "absent");
         }
     }
 
     /// <summary>
-    /// User-supplied identity of the part, used for deterministic ordering and conflict detection.
+    /// Stable identity of a part. The part id is the only identity value consumed by the assembler.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The declared conflict priority lives here rather than on <c>AvatarPartInstaller</c> on purpose: a part's
-    /// conflict behaviour is a property of the part asset and must travel with the prefab. An installer-level
-    /// override would make the same prefab behave differently per placement, which contradicts the stable
-    /// identity rule.
-    /// </para>
-    /// <para>
-    /// The new fields (<see cref="SlotMode"/>, <see cref="ConflictPriority"/>) were introduced with M6 and schema
-    /// version 3. Their defaults reproduce the schema-2 behaviour exactly, so a version-2 profile loaded by this
-    /// build behaves the same and needs no rewrite.
-    /// </para>
+    /// Older profiles also contain display-name, slot, slot-mode, and conflict-priority fields. They remain in the
+    /// serialized shape solely so those assets can still be read; current authoring and build decisions use only
+    /// <see cref="PartId"/>.
     /// </remarks>
     [Serializable]
     public sealed class ApaPartIdentity
     {
         [SerializeField] private string _partId = string.Empty;
+        // Kept solely so profiles written by older package versions deserialize without data loss. These
+        // values are no longer exposed by authoring UI or consumed by the build pipeline.
         [SerializeField] private string _displayName = string.Empty;
         [SerializeField] private ApaPartSlot _slot = ApaPartSlot.Custom;
         [SerializeField] private ApaPartSlotMode _slotMode = ApaPartSlotMode.Replace;
@@ -916,55 +928,35 @@ namespace AvatarPartAssembler
             set => _partId = value ?? string.Empty;
         }
 
-        /// <summary>Human-readable name shown in diagnostics.</summary>
+        /// <summary>Legacy metadata retained for backwards-compatible deserialization; ignored by APA.</summary>
         public string DisplayName
         {
             get => _displayName;
             set => _displayName = value ?? string.Empty;
         }
 
-        /// <summary>The body slot this part replaces or augments.</summary>
+        /// <summary>Legacy metadata retained for backwards-compatible deserialization; ignored by APA.</summary>
         public ApaPartSlot Slot
         {
             get => _slot;
             set => _slot = value;
         }
 
-        /// <summary>
-        /// Whether this part replaces the declared slot or attaches to it. Defaults to
-        /// <see cref="ApaPartSlotMode.Replace"/>, which is the M2 rule.
-        /// </summary>
+        /// <summary>Legacy metadata retained for backwards-compatible deserialization; ignored by APA.</summary>
         public ApaPartSlotMode SlotMode
         {
             get => _slotMode;
             set => _slotMode = value;
         }
 
-        /// <summary>
-        /// Declared conflict priority. Zero means "not declared" and is inert: it resolves nothing and changes
-        /// no ordering. A non-zero value participates in two mechanisms only — removal-region overlap ownership
-        /// and part ordering — and never changes weld ownership, UV values, material anchors, or blend shape
-        /// frames.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// A conflict is resolved by priority only when <i>every</i> claimant declares one and the highest
-        /// priority is unique. A single declared priority resolves nothing; an equal highest priority is
-        /// <c>APA010 reason=priority-tie</c>; a declared zero anywhere in a conflict is
-        /// <c>APA010 reason=undeclared-priority</c>. A negative value is <c>APA037</c>.
-        /// </para>
-        /// <para>
-        /// Higher values are processed first. When no part declares a priority (every existing profile), the
-        /// ordering key degenerates to the schema-2 key exactly, so the output order is unchanged.
-        /// </para>
-        /// </remarks>
+        /// <summary>Legacy metadata retained for backwards-compatible deserialization; ignored by APA.</summary>
         public int ConflictPriority
         {
             get => _conflictPriority;
             set => _conflictPriority = value;
         }
 
-        /// <summary>True when a conflict priority was declared (any non-zero value).</summary>
+        /// <summary>Legacy compatibility flag; always false for new authoring data.</summary>
         public bool HasConflictPriority => _conflictPriority != 0;
 
         /// <summary>
@@ -980,42 +972,15 @@ namespace AvatarPartAssembler
             return true;
         }
 
-        /// <summary>
-        /// Ordinal comparison of two identities for deterministic ordering. Declared conflict priority first
-        /// (descending, so a higher priority is ordered earlier), then slot, then stable part id, then display
-        /// name. Never uses a hierarchy path.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// This is the <i>profile-level projection</i> of the one authoritative order, which is
-        /// <c>PartOrderingKey.CompareTo</c> in the editor assembly: the ordering key is built from these same
-        /// four components, in this same order, and adds only the installer's avatar-root-relative path as a
-        /// final tiebreaker — a component that cannot exist until an installer places the profile in a
-        /// hierarchy, and which this runtime type therefore cannot see. The two must never be given different
-        /// components; a change to one belongs in the other in the same commit.
-        /// </para>
-        /// <para>
-        /// With every priority at its default zero the comparison degenerates to the schema-2 order, which is
-        /// what keeps the determinism guarantee for existing content: identical v2 inputs still produce the
-        /// identical order after M6.
-        /// </para>
-        /// </remarks>
+        /// <summary>Compares identities by stable part id only.</summary>
+        /// <remarks>Legacy callers may use this helper; it compares only stable IDs.</remarks>
         public static int Compare(ApaPartIdentity a, ApaPartIdentity b)
         {
             if (ReferenceEquals(a, b)) return 0;
             if (ReferenceEquals(a, null)) return -1;
             if (ReferenceEquals(b, null)) return 1;
 
-            var c = b.ConflictPriority.CompareTo(a.ConflictPriority);
-            if (c != 0) return c;
-
-            c = ((int)a.Slot).CompareTo((int)b.Slot);
-            if (c != 0) return c;
-
-            c = string.CompareOrdinal(a.PartId ?? string.Empty, b.PartId ?? string.Empty);
-            if (c != 0) return c;
-
-            return string.CompareOrdinal(a.DisplayName ?? string.Empty, b.DisplayName ?? string.Empty);
+            return string.CompareOrdinal(a.PartId ?? string.Empty, b.PartId ?? string.Empty);
         }
     }
 

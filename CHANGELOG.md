@@ -7,6 +7,157 @@ semantic versioning.
 Milestones are recorded newest first. Each entry says what the milestone added and what
 it did **not** do, because a milestone boundary the reader cannot see is a defect.
 
+## [0.3.0-rc.7] — installer health line, persisted bone-fit defaults, preview culling fix
+
+**The installer Inspector now answers one question at a glance — is this part ready? — and the preview no
+longer disappears at some camera angles. Built and uploaded renderers are untouched.**
+
+### Changed
+
+- **The installer Inspector leads with one concise health line.** Green and "this part is ready" when the full
+  validation reports no errors; red and "this part has a problem" when it reports errors or the build context
+  cannot be built. The detailed `APA` diagnostics stay below the line so a failure can still be understood. The
+  verdict is computed from the same context and core a build uses, cached against the inputs it was computed
+  from, and refreshed on a relevant serialized change or the Validate action — never on every repaint.
+- **The developer detail block is gone from the installer Inspector.** Part id (and its repair button), armature
+  names, schema and signature, recorded target path, removal and seam counts, UV and material semantics, and the
+  resolved target are authoring-tooling detail; they are no longer drawn for end users. Nothing about the
+  profile, the build, or the authoring window changed.
+- **`Follow Avatar Bones` and `Include Scale` are now preferences on `AvatarPartInstaller`, both defaulting to
+  enabled for a newly added installer.** The Inspector binds its toggles to the serialized fields and starts or
+  synchronizes `ApaBoneFollowRuntime` from them, so the choice survives closing the Inspector and a domain
+  reload, and turning either option off stops the session. Runtime/editor assembly boundaries are unchanged.
+
+### Fixed
+
+- **The preview mesh no longer vanishes at some view angles** (`Editor/Preview/PreviewProxyApplier.cs`). For the
+  preview proxy `SkinnedMeshRenderer`, the copied source renderer's animation-safe `localBounds` is preserved and
+  unioned with the generated mesh bounds instead of being replaced by the tight generated rest-pose bounds, and
+  `updateWhenOffscreen` is set to `true` on the proxy only. Correctness beats the preview-only cost. No build
+  mesh bounds are inflated and no real avatar renderer is modified.
+
+### Notes
+
+- Simplified Chinese entries were added for the new concise status text and the two bone-fit tooltips; focused
+  contract tests cover the removed detail block, the cached verdict, the persisted defaults, the preview bounds
+  union, the localization, and the version move. Not run: Unity's in-editor domain reload, the EditMode Test
+  Runner, and an NDMF preview session — the static compile and source-contract checks only.
+
+## [0.3.0-rc.6] — stable-ID-only part identity
+
+- Removed the editable part display name, slot, slot mode, and conflict-priority identity module. New authoring keeps only the stable part ID.
+- Part ordering now uses stable part ID plus installer path. Legacy identity fields remain readable for old profiles but are ignored by validation and build decisions.
+
+## [Unreleased] — Merge Animator retargeting and empty source-object cleanup
+
+**A part's recorded animation now follows the geometry the assembler moved, and an object the assembly emptied is
+removed from the build clone. Nothing in Modular Avatar or NDMF was changed.**
+
+### Added
+
+- **Blend-shape animation recorded on a part follows the assembled geometry**
+  (`Editor/NDMF/ApaAnimatorRetargetPass.cs`). A part prefab may carry a Modular Avatar *Merge Animator* — typically
+  in Relative path mode on the part root — whose controller animates the part renderer, most often its blend
+  shapes. Modular Avatar virtualizes that controller and prefixes every recorded path with the part root's
+  avatar-relative path, so the clip addresses the part renderer by the path it had when the animator services
+  context was opened. APA assembles that renderer's geometry into the target body renderer and consumes the part
+  renderer, which used to leave the animation addressing an object the assembly had replaced: the blend shape
+  stopped responding. APA now registers the consumed part renderer object → its group's target renderer object
+  with NDMF's `AnimatorServicesContext.ObjectPathRemapper.ReplaceObject`, and NDMF commits the mapping into the
+  generated clips when the context deactivates — the same mechanism Modular Avatar itself uses when it merges a
+  bone away. No animation clip is edited directly, no serialized controller is touched, and no Modular Avatar file
+  is changed.
+
+- **The retarget step is ordered so the mapping is actually committed**
+  (`Editor/NDMF/ApaNdmfPlugin.cs`). Modular Avatar opens the animator services context, processes the Merge
+  Animator and Merge Armature components, and closes it again inside its own Transforming sequence — its later
+  passes do not require the context — so by the time APA's Transforming sequence runs (it is ordered after
+  Modular Avatar's plugin end) the context is already closed. The retarget step therefore declares the context as
+  a **required** extension: NDMF opens it before the pass executes, the pass registers the pairs against a fresh
+  snapshot of the current hierarchy, and that activation's own deactivation commits them. Reopening the context is
+  a supported NDMF flow; Modular Avatar itself opens it once in Resolving and again in Transforming, and the
+  committed controllers are reused rather than re-created.
+
+- **Empty source objects are removed from the build clone** (`Editor/NDMF/ApaEmptySourceCleanupPass.cs`,
+  `Editor/NDMF/ApaSourceObjectCleanup.cs`). The assembly consumes a part renderer by destroying its component
+  only, deliberately leaving the object and everything under it alone, because the generated mesh may be skinned
+  to bones that live there. The renderer's own object is often left carrying nothing but a Transform. The cleanup
+  step removes exactly those objects and nothing else: the predicate requires the object to be alive, not the
+  avatar root, parented, childless, and to carry no component other than its Transform. A child, a constraint, a
+  PhysBone, an authoring component, or a missing script reference keeps the object. The step runs after Modular
+  Avatar's late transform stages (`nadena.dev.modular-avatar.late-transform-stages`), which purge the remaining
+  Modular Avatar components — otherwise a leftover `ModularAvatarMergeAnimator` would make an otherwise empty part
+  object survive — and after the retarget step, which needs the source objects alive to read their recorded paths.
+
+- **The consumed renderer objects are captured before they are destroyed**
+  (`Editor/NDMF/ApaBuildProcessor.cs`, `Editor/NDMF/ApaTransientArtifacts.cs`, `Editor/NDMF/ApaAssemblyPass.cs`).
+  A destroyed component cannot be asked for its GameObject, so the assembly pass records the source → target
+  object pairs — every consumed renderer of a group against that group's own target renderer, with null and
+  identical pairs skipped and a repeated source recorded once — in the per-build NDMF state before consumption.
+  Both later steps read that ledger instead of re-deriving it from a hierarchy the run has already rewritten.
+
+### Notes
+
+- **What the cleanup deliberately does not remove.** A part renderer that is a `MeshRenderer` leaves its
+  `MeshFilter` behind, because the assembly consumes the renderer component and nothing else; such an object is
+  not empty and is kept. This is the pre-existing consumption contract ("only the component is destroyed"), not a
+  new exception: the cleanup removes the objects the assembly can actually leave empty, and never guesses.
+- **The retarget mapping is a path mapping.** NDMF matches on the recorded path string. It moves a recorded
+  animation path onto the target renderer when the part renderer's recorded path is the path the clip addresses —
+  which is exactly the Relative-mode Merge Animator shape — and does nothing when it is not. No clip is rewritten
+  by this package, so a path this mapping does not match is left exactly as Modular Avatar produced it.
+- **No Modular Avatar or NDMF file was modified**, and no new assembly reference, `InternalsVisibleTo`, or global
+  state was introduced. Both new steps read the per-build NDMF state, so nothing leaks between avatars or builds.
+- **Not run.** The Roslyn compile check and the focused source contract check were run; Unity's in-editor domain
+  reload, the EditMode Test Runner, and a real NDMF/Modular Avatar build with a Merge Animator part were **not**
+  executed by the harness. `AnimatorRetargetContractTests` is compiled by the check and remains to be run in
+  Unity.
+
+## [0.3.0-rc.5] — stable authored skinning bind poses
+
+### Fixed
+
+- A live bone pose edited in the Scene view is no longer captured as a fresh bind pose during a preview rebuild
+  or Play Mode prebuild. Source mesh bind poses are converted into the target renderer's local basis; snapshots
+  without source bind data retain the legacy transform fallback.
+- The NDMF Play Mode path now validates each part mesh fingerprint in Generating, before Modular Avatar can
+  rewrite temporary part skin weights and bind poses. APA no longer compares that intentionally rewritten mesh
+  against the authoring fingerprint after the merge; `APA048` at the pre-merge checkpoint still blocks a genuine
+  source-mesh change and asks the author to recapture the profile.
+
+## [0.3.0-rc.4] — profile content identity and seam authoring guards
+
+### Added
+
+- Schema 5 stores deterministic FNV-1a content fingerprints for the target and part meshes. A profile now
+  blocks on `APA047 PROFILE_MESH_FINGERPRINT_MISSING` or `APA048 PROFILE_MESH_FINGERPRINT_MISMATCH` when a
+  reimport changes attributes that a topology summary cannot see (UVs, skin weights, bind poses, or blend-shape
+  deltas). New authoring saves capture the part fingerprint automatically; an existing non-empty fingerprint is
+  never overwritten silently.
+- Seam validation reports `APA049 SEAM_WEIGHT_BONE_NOT_IN_TARGET` when a seam vertex carries a live influence for a
+  bone absent from the target avatar's bone scope. This makes the authoring contract explicit: seam vertices may
+  not depend on part-only or unbound bones.
+- World-position seam generation accepts explicit candidate vertex indices for integrations that import a named seam
+  vertex group, validates candidate lists deterministically, and refuses tolerances above `1e-3` world units. The
+  existing all-vertex overload remains source-compatible.
+- Preview bone observation now treats local position/rotation/scale as live pose state. Moving or scaling a spine
+  therefore deforms the generated proxy through its live bone references instead of rebuilding bind poses from the
+  edited pose and snapping the mesh back to rest. Bone parent/name changes remain rebuild inputs.
+- Final skinning now prefers each source mesh's authored bind poses, converted into the target renderer's local
+  basis. A live editor pose is no longer captured as a fresh bind pose during preview rebuilds or Play Mode
+  prebuilds; legacy snapshots without source bind data keep the previous transform-based fallback.
+- Bone hierarchy observations use a separate structural registry, so a bone that is also a renderer or part-root
+  transform cannot accidentally re-enable pose-driven preview rebuilds through a generic transform observation.
+- Part mesh fingerprints are now checked during NDMF Generating, before Modular Avatar's armature merge can
+  rewrite temporary skin weights/bind poses. The later APA Transforming pass skips only that duplicate part check;
+  preview and direct core builds still validate their live source mesh normally.
+
+### Documentation
+
+- The author guide now recommends a dedicated seam candidate group in the source DCC, while treating the imported
+  candidate index list—not an arbitrary Unity-side group name—as the stable contract. It also documents the
+  target-bone-only seam weight rule and the fingerprint recapture workflow.
+
 ## [Unreleased] — review findings
 
 **Four defects found in a line-by-line review: one unsafe comparison, one unreachable branch, one unaudited

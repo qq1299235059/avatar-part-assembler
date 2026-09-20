@@ -30,7 +30,6 @@ namespace AvatarPartAssembler.Editor
                 new CompatibilityRule(),
                 new UnsupportedAttributeRule(),
                 new RemovalRule(),
-                new PartSlotRule(),
                 new SeamRule(),
                 new UvRule(),
                 new MaterialRule(),
@@ -171,24 +170,9 @@ namespace AvatarPartAssembler.Editor
     }
 
     /// <summary>
-    /// Enforces the slot contract: at most one part may <i>replace</i> a non-Custom body slot, any number of
-    /// parts may <i>augment</i> it, and an augmenting part may not declare a removal set.
+    /// Compatibility shim for the removed slot contract. Current validation intentionally ignores legacy slot
+    /// metadata; the type remains public so older integrations that instantiate the rule still compile.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <see cref="ApaPartSlot.Custom"/> is exempt because a Custom part is by definition outside the standard
-    /// body list, and several such parts may legitimately coexist.
-    /// </para>
-    /// <para>
-    /// The <see cref="ApaPartSlotMode.Replace"/> / <see cref="ApaPartSlotMode.Augment"/> split is the explicit,
-    /// non-guessing answer for the real cases that used to force Custom (a hat, hair, a tail, an accessory on
-    /// the head) while keeping the exclusive claim meaningful: exactly one part may replace a body region.
-    /// </para>
-    /// <para>
-    /// An augmenting part does not own a body region, so it has no standing to remove one. It may still weld,
-    /// merge UV and material semantics, contribute bones, and contribute blend shapes.
-    /// </para>
-    /// </remarks>
     public sealed class PartSlotRule : IApaValidationRule
     {
         /// <summary>The stable rule name.</summary>
@@ -200,97 +184,9 @@ namespace AvatarPartAssembler.Editor
         /// <inheritdoc />
         public void Validate(ValidationContext context, List<ValidationIssue> issues)
         {
-            var replaceOwners = new Dictionary<ApaPartSlot, string>();
-
-            for (var i = 0; i < context.Parts.Count; i++)
-            {
-                var part = context.Parts[i];
-                if (part == null) continue;
-
-                // A serialized profile can carry an integer outside the defined enum range — for example when a
-                // profile is written by a newer build and read by an older one, or when the asset is edited by
-                // hand. Such a value would otherwise fall through to the Custom exemption below and be accepted
-                // silently, which is exactly the kind of unchecked author data this validator exists to catch.
-                if (!IsDefinedSlot(part.Slot))
-                {
-                    issues.Add(ValidationIssue.Error(
-                        ApaErrorCode.InvalidPartSlot,
-                        ApaIssuePhase.Configuration,
-                        "Part '" + part.PartId + "' declares part slot value " + (int)part.Slot +
-                        ", which is not a defined slot. Re-author the part's profile.",
-                        part.PartId,
-                        (int)part.Slot,
-                        detail: "slot=" + (int)part.Slot + "; reason=undefined-slot"));
-                    continue;
-                }
-
-                if (!IsDefinedSlotMode(part.SlotMode))
-                {
-                    issues.Add(ValidationIssue.Error(
-                        ApaErrorCode.InvalidPartSlot,
-                        ApaIssuePhase.Configuration,
-                        "Part '" + part.PartId + "' declares slot mode value " + (int)part.SlotMode +
-                        ", which is not a defined mode. Re-author the part's profile.",
-                        part.PartId,
-                        (int)part.SlotMode,
-                        detail: "slotMode=" + (int)part.SlotMode + "; reason=undefined-slot-mode"));
-                    continue;
-                }
-
-                // An augmenting part attaches to a region it does not own, so it may not remove body geometry.
-                // The claim is checked first because it holds for Custom as well: Custom means "outside the
-                // standard body list", not "may delete any body region it likes".
-                if (part.SlotMode == ApaPartSlotMode.Augment
-                    && part.RemovedTriangles != null
-                    && part.RemovedTriangles.Count > 0)
-                {
-                    issues.Add(ValidationIssue.Error(
-                        ApaErrorCode.DuplicatePartSlot,
-                        ApaIssuePhase.Configuration,
-                        "Part '" + part.PartId + "' augments slot " + part.Slot + " but also declares " +
-                        part.RemovedTriangles.Count + " removal triangle(s). A part that augments a region does " +
-                        "not own it, so it cannot remove body geometry; use Replace if this part owns the " +
-                        "region, or drop the removal selection.",
-                        part.PartId,
-                        (int)part.Slot,
-                        part.RemovedTriangles.Count,
-                        detail: "slot=" + part.Slot + "; slotMode=Augment; removals=" +
-                                part.RemovedTriangles.Count + "; reason=augment-declares-removal"));
-                    continue;
-                }
-
-                if (part.Slot == ApaPartSlot.Custom) continue;
-                if (part.SlotMode == ApaPartSlotMode.Augment) continue;
-
-                if (replaceOwners.TryGetValue(part.Slot, out var otherPartId))
-                {
-                    issues.Add(ValidationIssue.Error(
-                        ApaErrorCode.DuplicatePartSlot,
-                        ApaIssuePhase.Configuration,
-                        "Parts '" + otherPartId + "' and '" + part.PartId + "' both claim slot " + part.Slot +
-                        " with mode Replace. Only one part may replace a standard body slot; mark the additional " +
-                        "part Augment to attach it to the region, or use Custom for a part outside the body list.",
-                        part.PartId,
-                        (int)part.Slot,
-                        detail: "slot=" + part.Slot + "; otherPart=" + otherPartId +
-                                "; reason=duplicate-replace-slot"));
-                    continue;
-                }
-
-                replaceOwners.Add(part.Slot, part.PartId);
-            }
-        }
-
-        /// <summary>True when the value is one of the defined <see cref="ApaPartSlot"/> members.</summary>
-        private static bool IsDefinedSlot(ApaPartSlot slot)
-        {
-            return slot >= ApaPartSlot.Head && slot <= ApaPartSlot.Custom;
-        }
-
-        /// <summary>True when the value is one of the defined <see cref="ApaPartSlotMode"/> members.</summary>
-        private static bool IsDefinedSlotMode(ApaPartSlotMode mode)
-        {
-            return mode >= ApaPartSlotMode.Replace && mode <= ApaPartSlotMode.Augment;
+            // Part slots and slot modes were removed from the authoring contract. Keep this rule type as a
+            // compatibility shim for callers that referenced it directly, but do not inspect legacy metadata.
+            return;
         }
     }
 

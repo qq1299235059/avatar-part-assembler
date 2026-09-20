@@ -39,7 +39,7 @@ namespace AvatarPartAssembler.Editor
             {
                 var part = context.Parts[i];
                 if (part?.Mesh == null) continue;
-                InspectMesh(part.Mesh, part.PartId, part.DisplayName, issues);
+                InspectMesh(part.Mesh, part.PartId, string.Empty, issues);
             }
         }
 

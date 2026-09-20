@@ -97,6 +97,50 @@ namespace AvatarPartAssembler.Editor
 
             var actual = context.Base.Mesh;
 
+            // A topology summary cannot see an attribute-only reimport. The content fingerprint is the
+            // fail-closed check for that case; keep the diagnostic separate so an author is told to recapture,
+            // rather than sent looking for a different renderer.
+            if (!expected.HasMeshFingerprint)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.ProfileMeshFingerprintMissing,
+                    ApaIssuePhase.Compatibility,
+                    "The profile has no content fingerprint for the target mesh. A mesh GUID and topology summary " +
+                    "cannot prove that a reimport preserved UVs, skin weights, or blend-shape deltas. Capture the " +
+                    "profile again before building.",
+                    detail: "reason=mesh-fingerprint-missing; target=" + context.Base.RendererPath));
+            }
+            else if (!string.Equals(expected.MeshFingerprint, actual.ContentFingerprint, StringComparison.Ordinal))
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.ProfileMeshFingerprintMismatch,
+                    ApaIssuePhase.Compatibility,
+                    "The target mesh content no longer matches the fingerprint stored in the profile. The asset " +
+                    "may have been reimported with changed attributes; recapture the profile against the intended " +
+                    "body before building.",
+                    detail: "reason=mesh-fingerprint-mismatch; target=" + context.Base.RendererPath +
+                            "; expected=" + expected.MeshFingerprint +
+                            "; actual=" + actual.ContentFingerprint));
+            }
+
+            // Modular Avatar rewrites part skinning while merging armatures. An NDMF build therefore validates
+            // the authoring mesh in Generating, before that rewrite, and marks the post-merge context so this
+            // comparison is not repeated against an intentionally different temporary mesh. Preview and direct
+            // core callers still validate here because no earlier pass exists for them.
+            if (!context.PartMeshFingerprintsVerifiedBeforeMerge)
+            {
+                for (var p = 0; p < context.Parts.Count; p++)
+                {
+                    var part = context.Parts[p];
+                    if (part?.Mesh == null) continue;
+                    ValidatePartMeshFingerprint(
+                        part.PartId,
+                        part.ProfileMeshFingerprint,
+                        part.Mesh.ContentFingerprint,
+                        issues);
+                }
+            }
+
             // A signature written before the safety fields existed cannot be compared field by field, because
             // the absent fields have no "expected" value to differ from. Reporting this as its own code keeps
             // "your body changed" and "your profile is too old to check" from collapsing into one message.
@@ -498,6 +542,41 @@ namespace AvatarPartAssembler.Editor
             }
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Compares a part's authoring fingerprint with a mesh that is known to be from the same authoring stage.
+        /// The NDMF Generating pass uses this before Modular Avatar rewrites the part's skinning data; the normal
+        /// post-capture rule uses the same helper for preview and direct core callers.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is the single implementation of the part-fingerprint comparison, and it is public because one
+        /// of its two callers lives in another assembly.</b> The pre-merge check runs from
+        /// <c>ApaMergeArmaturePass</c> in <c>dev.avatar-part-assembler.editor.ndmf</c>, which references this
+        /// assembly without being part of it: an <c>internal</c> helper is invisible from there and the call site
+        /// fails to compile (CS0117) instead of degrading to anything. Tightening this back to <c>internal</c>,
+        /// or copying the comparison into the pass, would either break the build or split one APA048 verdict into
+        /// two divergent ones, so both the accessibility and the single body are deliberate.
+        /// </remarks>
+        public static bool ValidatePartMeshFingerprint(
+            string partId,
+            string expected,
+            string actual,
+            List<ValidationIssue> issues)
+        {
+            if (string.IsNullOrEmpty(expected)) return true;
+            if (string.Equals(expected, actual ?? string.Empty, StringComparison.Ordinal)) return true;
+
+            issues?.Add(ValidationIssue.Error(
+                ApaErrorCode.ProfileMeshFingerprintMismatch,
+                ApaIssuePhase.Compatibility,
+                "Part '" + (partId ?? string.Empty) + "' no longer matches the mesh fingerprint stored in its " +
+                "profile. The part may have been reimported with changed attributes; recapture the part profile " +
+                "before building.",
+                partId,
+                detail: "reason=part-mesh-fingerprint-mismatch; expected=" + (expected ?? string.Empty) +
+                        "; actual=" + (actual ?? string.Empty)));
+            return false;
         }
     }
 }

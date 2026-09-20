@@ -22,7 +22,7 @@ authoring asset.
 
 ## Release-candidate status
 
-**This is release candidate `0.3.0-rc.3` (`0.3.0-rc.3` in `package.json`). It is not a
+**This is release candidate `0.3.0-rc.6` (`0.3.0-rc.6` in `package.json`). It is not a
 1.0 release and the full acceptance checklist is still incomplete.**
 
 The core build path has now been exercised in Unity 2022.3.22f1 rather than only reviewed
@@ -114,7 +114,7 @@ whether the Test Runner can see and run it.
 
 ## Play Mode and Gesture Manager
 
-`0.3.0-rc.3` enables Play Mode compatibility by default. When a loaded scene contains an
+`0.3.0-rc.6` enables Play Mode compatibility by default. When a loaded scene contains an
 `AvatarPartInstaller`, APA temporarily enables NDMF's official **Apply On Play** setting before
 entering Play Mode.
 
@@ -129,11 +129,64 @@ There is no longer an `EnteredPlayMode` second build and no late `Animator.Rebin
 Rebuilding after an emulator has already posed the bones can combine T-pose vertex data with bind
 data captured from a posed armature, producing severe deformation on the next animation update.
 
+During edit-time preview, local position/rotation/scale changes on bones are treated as live pose state rather than
+assembly inputs. The proxy keeps the live bone references, so dragging or scaling a Spine deforms the assembled mesh
+without rebuilding bind poses from that edited pose. Bone parent/name/list changes still invalidate the preview because
+they change armature-relative resolution. If Play Mode still reports a rest mesh driven by edited bones, inspect the
+console for `Play Mode scene prebuild failed` or an APA blocking diagnostic: that means the early temporary-scene
+prebuild did not complete before the animator/emulator ran.
+
+Part mesh fingerprints are checked in NDMF's **Generating** phase, before Modular Avatar consumes the
+transient merge-armature configuration. Modular Avatar may rewrite a temporary part renderer's skin weights and
+bind poses during its Transforming phase; that post-merge mesh is therefore intentionally not compared with the
+authoring fingerprint a second time. An `APA048` from Generating means the source part really changed and the
+profile should be recaptured; an `APA048` after the merge would indicate a regression in this ordering contract.
+
 Only Unity's temporary Play Mode scene copy is modified; the edit-time scene, prefab, and model
 assets are not written. APA remembers the user's previous NDMF Apply On Play value across the
 Play Mode domain reload and restores it on return to Edit Mode. To intentionally test the raw,
 unprocessed authoring avatar, toggle
 `Tools > Avatar Part Assembler > Play Mode + Gesture Manager Compatibility` off.
+
+---
+
+## Modular Avatar Merge Animator compatibility
+
+A part prefab may carry a Modular Avatar **Merge Animator** — typically in Relative path mode on the part root —
+whose controller animates the part renderer, most often its blend shapes. Modular Avatar virtualizes that
+controller and prefixes every recorded path with the part root's avatar-relative path, so the clip addresses the
+part renderer by the path it had when the animator services context was opened. APA assembles that renderer's
+geometry into the target body renderer and consumes the part renderer; without a retarget the animation would keep
+addressing an object the assembly replaced, and the blend shape would stop responding.
+
+APA registers the consumed part renderer object → its group's target renderer object with NDMF's
+`AnimatorServicesContext.ObjectPathRemapper.ReplaceObject`, and NDMF commits the mapping into the generated clips
+when the context deactivates — the same mechanism Modular Avatar uses when it merges a bone away. No animation
+clip is edited by this package, no serialized controller is touched, and no Modular Avatar file is changed.
+
+The timing is the contract, and it is why the step is a separate NDMF pass:
+
+| Step | Why it is there |
+| --- | --- |
+| The pairs are captured in the assembly pass, before the consumed renderer components are destroyed | A destroyed component cannot be asked for its GameObject, and the mapping needs objects |
+| The retarget step **requires** `AnimatorServicesContext` | Modular Avatar has already closed the context it used by the time APA's Transforming sequence runs, so NDMF opens it for this pass and that activation's own deactivation commits the mappings |
+| The retarget step runs after the assembly pass | A mapping is only ever registered for an assembly that happened |
+| The cleanup step runs after `nadena.dev.modular-avatar.late-transform-stages` and after the retarget step | The late stages purge the remaining Modular Avatar components (so a leftover `ModularAvatarMergeAnimator` cannot keep an empty object alive), and the retarget step needs the source objects alive |
+
+The animation-retarget step is skipped when the build assembled nothing, and neither step mutates a build whose
+report already carries an error.
+
+### Empty source-object cleanup
+
+The assembly consumes a part renderer by destroying its **component** only, leaving the object and everything
+under it alone, because the generated mesh may be skinned to bones that live there. The renderer's own object is
+often left carrying nothing but a Transform. APA removes exactly those objects, and only those: the object must be
+alive, not the avatar root, parented, childless, and carry no component other than its Transform. A child, a
+constraint, a PhysBone, an authoring component, or a missing script reference keeps it.
+
+A part renderer that is a `MeshRenderer` leaves its `MeshFilter` behind — the assembly consumes the renderer
+component and nothing else — so such an object is not empty and is kept. The cleanup removes what the assembly can
+actually leave empty and never guesses.
 
 ---
 
@@ -336,9 +389,10 @@ would follow an appended duplicate instead.
 - **Merges** UV channels and material slots by semantic name, independently of Unity
   channel indices and of material asset names.
 - **Skins** the result: every retained vertex's `BoneWeight` is remapped onto one final
-  bone table (the body's own bones first, then new part bones in canonical part order),
-  and every bind pose is recomputed as
-  `finalBone.worldToLocalMatrix * finalRenderer.localToWorldMatrix`.
+  bone table (the body's own bones first, then new part bones in canonical part order).
+  Bind poses come from each source mesh's authored rest-pose bind data and are converted
+  into the target renderer's local basis, so moving a bone in the editor cannot become a
+  new bind pose. Legacy snapshots without source bind data retain the live-transform fallback.
 - **Remaps blend shapes**: every frame of every shape, over every retained vertex, for
   position, normal, and tangent deltas.
 - **Registers with NDMF**: a `Generating` pass creates the transient Modular Avatar
@@ -357,7 +411,7 @@ would follow an appended duplicate instead.
 Runtime/                     dev.avatar-part-assembler.runtime   (no Editor dependency)
   Common/                    stable codes, severity, numeric policy, name rules, path vocabulary
   Components/                AvatarPartInstaller — the data-only component a user adds
-  Profiles/                  ApaPartProfile and its serializable parts (schema v4)
+                             Profiles/                  ApaPartProfile and its serializable parts (schema v5)
 
 Editor/                      dev.avatar-part-assembler.editor    (Editor only)
   ApaCore.cs                 the single core facade
@@ -435,8 +489,7 @@ No output byte may depend on dictionary iteration, hash-set order, or
 ```text
 target groups     ascending ordinal group key (the resolved target renderer's
                   avatar-root-relative path)
-installers        (effective priority descending, slot, stable part id, display name,
-                  avatar-root-relative installer path)
+installers        (stable part id, avatar-root-relative installer path)
 removed triangles ascending (submesh index, triangle index within submesh)
 base vertices     ascending original index
 part vertices     (part order, then original index)
@@ -450,9 +503,8 @@ issues            (phase, code, part identity, source index, detail)
 
 A part's ordering key is its **serialized stable part id**, never a hierarchy path,
 because a path changes when an object is reparented and the ordering must not. The path
-is the final tiebreaker. Priority participates only when at least one part in the group
-declares one, so a configuration with no declared priorities produces the identical
-order it produced before priority existed.
+is the final tiebreaker. Legacy display names, slots, slot modes, and conflict priorities
+are retained only for old asset deserialization and do not affect ordering or validation.
 
 ### Seam generation and matching
 
@@ -464,7 +516,7 @@ units**.
 
 | Property | Rule |
 | --- | --- |
-| Tolerance | default `1e-4` (0.1 mm); the window accepts `1e-7` through `1e-2`. World units, because a seam is authored in world space |
+| Tolerance | default `1e-4` (0.1 mm); the window accepts `1e-7` through `1e-3`, and refuses larger values. World units, because a seam is authored in world space |
 | Pairing | `Base.VertexIndices[i]` and `Part.VertexIndices[i]` are one weld; the result *is* the pairing, so no "pair the two unordered sets by position" step is left |
 | Determinism | part vertices are visited in ascending index order and each takes the nearest still-free target vertex; ties go to the lower target index |
 | One-to-one | no target vertex is claimed twice (`APA003 reason=duplicate-base-claim`) |
@@ -570,35 +622,16 @@ call it (`AvatarPartInstaller.IsActiveForBuild`):
 Reporting a parked part is deliberate: a silently ignored part looks exactly like an
 installed part.
 
-### Conflict priority
+### Legacy identity policy fields
 
-`ApaPartIdentity.ConflictPriority` is serialized **on the profile**, not on the
-installer, so it travels with the prefab. Zero means "not declared" and is inert.
-
-| Situation | Result |
-| --- | --- |
-| No part in the group declares a priority | Ordering is exactly the pre-priority order; output is unchanged |
-| Removal overlap, every claimant declares a priority, highest is unique | Succeeds; **Warning `APA035 reason=removal-overlap-resolved-by-priority`** names the owner, the owner's priority, the losers, and a bounded sample of resolved addresses. The removed triangle set is the union either way — removal is idempotent — so priority decides *ownership* of the region, not geometry |
-| Removal overlap, at least one claimant declares nothing (0) | Blocking `APA010 reason=undeclared-priority` |
-| Removal overlap, equal highest priority | Blocking `APA010 reason=priority-tie` |
-| A negative priority | Blocking `APA037 reason=negative-conflict-priority` |
-| A priority is declared | Parts are ordered by priority descending **first**, then slot, part id, display name, installer path |
-
-Priority never changes weld ownership, UV values, material anchors, or blend shape
-frames. It has exactly two effects: ordering, and naming the owner of a resolved
-removal overlap.
+Older versions serialized display name, slot, slot mode, and conflict priority in the
+part identity object. These fields are now ignored. New authoring exposes only the stable
+part ID; old fields remain as a read-only compatibility shim so existing profiles can be
+opened and rewritten without losing unrelated data.
 
 ---
 
-## Slot, removal, UV, material, blend shape, and bone policies
-
-### Slots
-
-| # | Situation | Result |
-| --- | --- | --- |
-| S1 | `Custom` slot | Any number of parts; no conflict |
-| S2 | Non-`Custom` slot, exactly one `Replace` | OK |
-| S3 | Non-`Custom` slot, two or more `Replace` | Blocking `APA013 DUPLICATE_PART_SLOT reason=duplicate-replace-slot` — even with different priorities. Priority orders parts; it never lets two parts replace one region |
+## Removal, UV, material, blend shape, and bone policies
 | S4 | Non-`Custom` slot, one `Replace` + N `Augment` | OK |
 | S5 | Non-`Custom` slot, N `Augment`, no `Replace` | OK — nothing claims exclusive ownership |
 | S6 | An `Augment` part that declares a non-empty removal set | Blocking `APA013 reason=augment-declares-removal`. An augmenting part may still weld, merge UV and material semantics, contribute bones, and contribute blend shapes |
@@ -854,6 +887,17 @@ Transforming   (nadena.dev.modular-avatar runs here)
                - returns immediately if the build has already failed
                - returns immediately if the avatar has no active installer
                - verifies the merge postcondition, then processes
+               - records the consumed part renderer objects → their group's target objects
+
+               ApaAnimatorRetargetPass "Retarget consumed part animation onto the target renderer"
+               - requires AnimatorServicesContext, so NDMF opens it for this pass
+               - ObjectPathRemapper.ReplaceObject(source, target) per recorded pair
+               - the context's deactivation commits the mappings into the generated clips
+
+               (nadena.dev.modular-avatar.late-transform-stages runs here)
+               ApaEmptySourceCleanupPass "Remove consumed part objects left empty"
+               - ordered after the late transform stages and after the retarget pass
+               - removes a recorded source object only when ApaSourceObjectCleanup says it is empty
 ```
 
 Four properties of that arrangement are deliberate:
@@ -884,8 +928,11 @@ suffix, and no inference: Modular Avatar's byte-identical-name matching then rep
 relation the armature-relative identity describes, rather than adding a name heuristic
 beside it.
 
-Both passes are VRChat-avatar-only, which is NDMF's default for a plugin without
-`RunsOnAllPlatforms`.
+All four passes are VRChat-avatar-only, which is NDMF's default for a plugin without
+`RunsOnAllPlatforms`. The two steps that finish the assembly declare their own ordering as
+well — the retarget step requires the animator services context and the cleanup step is
+declared after Modular Avatar's late transform plugin and after the retarget step; see
+[Modular Avatar Merge Animator compatibility](#modular-avatar-merge-animator-compatibility).
 
 ### Preview
 
@@ -902,10 +949,12 @@ seq.Run(ApaAssemblyPass.Instance).PreviewingWith(ApaPreviewRegistration.CreateFi
   group for that renderer, so NDMF has no proxy: the original body renders unchanged and
   a previously successful preview cannot survive an invalid edit. The reason is reported
   as a diagnostic.
-- Cache keys are a content **fingerprint** (`apa-preview-fnv1a64-v1`, FNV-1a over exact
+- Cache keys are a content **fingerprint** (`apa-preview-fnv1a64-v2`, FNV-1a over exact
   scalar representations, never process-randomized hashing) covering the captured input
   set, each captured mesh attribute by attribute, the profile serialization, the
-  transforms, the material identities, and the numeric tolerances. Failures are **not**
+  transforms, the material identities, and the numeric tolerances. Live bone pose matrices
+  are excluded because proxy bones remain live and pose edits must not rebuild bind poses.
+  Failures are **not**
   cached; an uncached build is retried.
 - The mesh cache is bounded (default capacity 4, plus live leases), every evicted mesh is
   destroyed immediately, and the whole cache is destroyed before an assembly reload, on
@@ -1010,8 +1059,8 @@ Two version numbers, never conflated:
 
 | Version | Meaning | Current value |
 | --- | --- | --- |
-| `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **4** (`ApaPartProfile.CurrentSchemaVersion`) |
-| Package version in `package.json` | The shipped build | **0.3.0-rc.3** |
+| `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **5** (`ApaPartProfile.CurrentSchemaVersion`) |
+| Package version in `package.json` | The shipped build | **0.3.0-rc.6** |
 
 Migration policy:
 
@@ -1168,10 +1217,15 @@ reason=target-armature-inside-part-armature  the target is the part's own armatu
 reason=merge-target-is-part               the target is inside the part being merged, so nothing would merge
 
 APA044 BONE_OUTSIDE_SELECTED_ARMATURE     a weighted bone has no armature-relative identity
+
+APA047 PROFILE_MESH_FINGERPRINT_MISSING   schema-5 profile has no content fingerprint
+APA048 PROFILE_MESH_FINGERPRINT_MISMATCH  target or part mesh attributes no longer match the captured content
+APA049 SEAM_WEIGHT_BONE_NOT_IN_TARGET     a seam vertex is weighted to a bone absent from the target avatar
 reason=bone-outside-armature              the bone is outside its renderer's selected armature
 ```
 
-`APA045` and above are the next free codes. The allocation record is machine-checkable
+`APA045` and `APA046` are the M11 informational/identity codes; `APA047`–`APA049` are allocated by M12 for
+mesh-content and seam-skinning safety. The allocation record is machine-checkable
 through `ApaReservedCodes.Milestone2` / `.Milestone5Authoring` / `.Milestone6` /
 `.Milestone9Authoring` / `.Milestone10` and `IsMilestone2Code` /
 `IsMilestone5AuthoringCode` / `IsMilestone6Code` / `IsMilestone9AuthoringCode` /
@@ -1316,7 +1370,7 @@ observation of them (checklist 6.7) is still open.
 
 ### Release-candidate versioning
 
-`0.3.0-rc.3` is a **prerelease**. Per semver it sorts before `0.3.0`, so no VPM
+`0.3.0-rc.6` is a **prerelease**. Per semver it sorts before `0.3.0`, so no VPM
 resolution will treat it as the stable `0.3.0`. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
 no document, changelog entry, or commit message in this package may describe the

@@ -550,6 +550,8 @@ namespace AvatarPartAssembler.Editor
                 if (!resolutions.TryGetValue(part.PartId, out var resolution)) continue;
                 if (!resolution.IsComplete || resolution.Count == 0) continue;
 
+                ValidateSeamWeightBones(context, part, resolution, issues);
+
                 var partPlan = weldPlan != null ? weldPlan.For(part.PartId) : null;
 
                 var preserved = partPlan != null ? partPlan.SplitCount : 0;
@@ -569,6 +571,74 @@ namespace AvatarPartAssembler.Editor
                     suffix,
                     part.PartId,
                     detail: "reason=seam-pairs-established; " + counts));
+            }
+        }
+
+        /// <summary>
+        /// Ensures every weighted seam vertex uses a bone that exists in the target body's final bone scope.
+        /// </summary>
+        /// <remarks>
+        /// UV-preserved seams are intentionally split in the output, but they still share the same rest-space
+        /// position. If a part seam vertex is weighted to a part-only or otherwise absent bone, animation moves
+        /// that duplicate independently and creates a visible crack. The authoring contract therefore requires
+        /// seam vertices to use only target-avatar bones; this check reports the first occurrence per bone/vertex
+        /// and leaves general invalid-index/normalisation diagnostics to <see cref="BoneWeightValidator"/>.
+        /// </remarks>
+        private static void ValidateSeamWeightBones(
+            ValidationContext context,
+            PartSnapshot part,
+            SeamResolution resolution,
+            List<ValidationIssue> issues)
+        {
+            var targetPaths = new HashSet<string>(System.StringComparer.Ordinal);
+            var paths = context.Base.Mesh.BoneSignature.Paths;
+            for (var i = 0; i < paths.Count; i++)
+            {
+                var path = paths[i];
+                if (ApaAvatarPath.HasIdentity(path)) targetPaths.Add(path);
+            }
+
+            if (targetPaths.Count == 0 || part.Mesh.SkinWeights.Count == 0) return;
+
+            var reported = new HashSet<string>(System.StringComparer.Ordinal);
+            var partPaths = part.Mesh.BoneSignature.Paths;
+            for (var m = 0; m < resolution.Matches.Count; m++)
+            {
+                var match = resolution.Matches[m];
+                if (match.PartVertex < 0 || match.PartVertex >= part.Mesh.SkinWeights.Count) continue;
+
+                var weight = part.Mesh.SkinWeights[match.PartVertex];
+                ValidateInfluence(weight.boneIndex0, weight.weight0, match, 0);
+                ValidateInfluence(weight.boneIndex1, weight.weight1, match, 1);
+                ValidateInfluence(weight.boneIndex2, weight.weight2, match, 2);
+                ValidateInfluence(weight.boneIndex3, weight.weight3, match, 3);
+            }
+
+            void ValidateInfluence(int boneIndex, float influence, SeamMatch match, int slot)
+            {
+                if (influence <= context.NumericPolicy.WeightEpsilon) return;
+                if (boneIndex < 0 || boneIndex >= partPaths.Count) return;
+
+                var path = partPaths[boneIndex] ?? string.Empty;
+                if (targetPaths.Contains(path)) return;
+
+                var key = match.PartVertex + "|" + path;
+                if (!reported.Add(key)) return;
+
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.SeamWeightBoneNotInTarget,
+                    ApaIssuePhase.Seam,
+                    "Part '" + part.PartId + "' seam vertex " + match.PartVertex +
+                    " uses bone '" + path + "', which is not present in the target avatar's bone scope. " +
+                    "The split seam vertex would animate independently and can crack. Use only target-avatar " +
+                    "bones at the seam and remove unbound weight groups from the part.",
+                    part.PartId,
+                    match.PartVertex,
+                    match.BaseVertex,
+                    detail: "reason=seam-bone-not-in-target; partVertex=" + match.PartVertex +
+                            "; baseVertex=" + match.BaseVertex + "; boneIndex=" + boneIndex +
+                            "; influenceSlot=" + slot + "; bonePath=" + path +
+                            "; targetBones=" + targetPaths.Count));
             }
         }
 

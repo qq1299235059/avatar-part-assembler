@@ -31,12 +31,17 @@ namespace AvatarPartAssembler.Editor.Preview
     /// </description></item>
     /// </list>
     /// <para>
-    /// <b>Content is covered by the capture, not by the poll.</b> Mesh vertices, blend shape deltas, bone
-    /// matrices, and profile-derived data are hashed into the request fingerprint by
+    /// <b>Content is covered by the capture, not by the poll.</b> Mesh vertices, blend shape deltas, bind data,
+    /// and profile-derived data are hashed into the request fingerprint by
     /// <see cref="ApaPreviewFingerprint.OfContext"/> when discovery captures them, and compared again when a node
     /// verifies itself during refresh. The poll extractors therefore only have to notice that <i>something</i>
     /// changed — a different mesh reference, a different set of bone or material identities, a different
     /// transform — for the fingerprint to be recomputed and compared.
+    /// </para>
+    /// <para>
+    /// <b>Bone pose is not a rebuild input.</b> The generated proxy keeps live bone references, so a local TRS edit
+    /// must deform the current mesh instead of rebuilding bind poses from the edited state. Bone hierarchy/name
+    /// changes remain observed because they change path resolution.
     /// </para>
     /// <para>
     /// <b>Each object is registered once per call.</b> Several inputs overlap by construction: an installer's
@@ -198,11 +203,14 @@ namespace AvatarPartAssembler.Editor.Preview
                 context.Observe(partRoot);
             }
 
-            if (partRoot != null) ObserveTransform(context, partRoot.transform, scope);
-
             // The first renderer under the part root is the one the core captures geometry from, so it is the one
             // whose mesh, materials, bones, and transform can change the output.
             ObserveRenderer(context, partRoot != null ? partRoot.GetComponentInChildren<Renderer>(true) : null, scope);
+
+            // ObserveRenderer registers the part armature's structural path first. If the part root is itself a
+            // bone, this ordering prevents the generic part-root transform observation below from reintroducing
+            // live bone TRS as a rebuild input.
+            if (partRoot != null) ObserveTransform(context, partRoot.transform, scope);
         }
 
         private static void ObserveRenderer(ComputeContext context, Renderer renderer, ObservationScope scope)
@@ -212,6 +220,24 @@ namespace AvatarPartAssembler.Editor.Preview
 
             context.Observe(renderer);
             context.Observe(renderer, RendererToken);
+
+            var skinned = renderer as SkinnedMeshRenderer;
+            if (skinned != null)
+            {
+                // Register the structural path before the renderer path. A renderer or its ancestor can also be
+                // an armature node; in that case the generic transform observer must not poll live bone TRS.
+                ObserveBoneStructure(context, skinned.rootBone, scope);
+
+                var bones = skinned.bones;
+                if (bones != null)
+                {
+                    for (var i = 0; i < bones.Length; i++)
+                    {
+                        ObserveBoneStructure(context, bones[i], scope);
+                    }
+                }
+            }
+
             ObserveTransform(context, renderer.transform, scope);
 
             ObserveMesh(context, SharedMeshOf(renderer), scope);
@@ -230,19 +256,6 @@ namespace AvatarPartAssembler.Editor.Preview
                 }
             }
 
-            var skinned = renderer as SkinnedMeshRenderer;
-            if (skinned == null) return;
-
-            ObserveTransform(context, skinned.rootBone, scope);
-
-            var bones = skinned.bones;
-            if (bones == null) return;
-            for (var i = 0; i < bones.Length; i++)
-            {
-                // Bone transforms matter twice: the final bone table records their paths, and the bind poses are
-                // computed from their world matrices. A moved, renamed, or reparented bone changes the output.
-                ObserveTransform(context, bones[i], scope);
-            }
         }
 
         private static void ObserveMesh(ComputeContext context, Mesh mesh, ObservationScope scope)
@@ -265,8 +278,29 @@ namespace AvatarPartAssembler.Editor.Preview
                 if (node == null) continue;
                 if (!scope.Transforms.Add(node.GetInstanceID())) continue;
 
+                // A skinned renderer may sit on or below an armature node. Its path still needs structural
+                // monitoring, but the node's local TRS is live pose state and must not be registered through the
+                // generic transform token when ObserveBoneStructure has already claimed it.
+                if (scope.BoneStructures.Contains(node.GetInstanceID())) continue;
+
                 context.Observe(node);
                 context.Observe(node, TransformToken);
+            }
+        }
+
+        private static void ObserveBoneStructure(ComputeContext context, Transform transform, ObservationScope scope)
+        {
+            if (context == null || transform == null) return;
+
+            foreach (var node in context.ObservePath(transform))
+            {
+                if (node == null) continue;
+                if (!scope.BoneStructures.Add(node.GetInstanceID())) continue;
+
+                // Do not poll localPosition/localRotation/localScale here. Those values are the avatar's live
+                // pose and are consumed by Unity skinning through the proxy's bones array. Parent/name changes
+                // still alter armature-relative identity and therefore remain cache inputs.
+                context.Observe(node, BoneStructureToken);
             }
         }
 
@@ -285,6 +319,13 @@ namespace AvatarPartAssembler.Editor.Preview
 
             /// <summary>Transforms, including every ancestor of every observed transform.</summary>
             internal readonly HashSet<int> Transforms = new HashSet<int>();
+
+            /// <summary>Bone hierarchy nodes observed for identity changes, independent of pose observations.</summary>
+            /// <remarks>
+            /// A node can also be a renderer/part-root transform. Keeping this set separate ensures that an
+            /// earlier generic transform observation cannot accidentally re-enable live bone TRS invalidation.
+            /// </remarks>
+            internal readonly HashSet<int> BoneStructures = new HashSet<int>();
         }
 
         private static Renderer RendererOf(GameObject gameObject)
@@ -319,10 +360,10 @@ namespace AvatarPartAssembler.Editor.Preview
             return (installer.EnabledForBuild, installer.Profile, installer.PartRoot, installer.TargetRendererObject);
         }
 
-        private static (int schemaVersion, string partId, string displayName, int slot, bool supported) ProfileToken(
+        private static (int schemaVersion, string partId, bool supported) ProfileToken(
             ApaPartProfile profile)
         {
-            if (profile == null) return (-1, null, null, -1, false);
+            if (profile == null) return (-1, null, false);
 
             // IdentityOrNull, never Identity: the profile is a shared authoring asset and the materializing
             // getter would assign a new nested object into it. This poll runs from a preview path, which is
@@ -331,8 +372,6 @@ namespace AvatarPartAssembler.Editor.Preview
             return (
                 profile.SchemaVersion,
                 identity != null ? identity.PartId : null,
-                identity != null ? identity.DisplayName : null,
-                identity != null ? (int)identity.Slot : -1,
                 profile.IsSchemaSupported);
         }
 
@@ -382,6 +421,12 @@ namespace AvatarPartAssembler.Editor.Preview
             if (transform == null) return (default, default, default, null, null);
             return (transform.localPosition, transform.localRotation, transform.localScale, transform.parent,
                 transform.name);
+        }
+
+        private static (Transform parent, string name) BoneStructureToken(Transform transform)
+        {
+            if (transform == null) return (null, null);
+            return (transform.parent, transform.name);
         }
 
         private static (int vertexCount, int subMeshCount, int blendShapeCount, Bounds bounds, int indexFormat)

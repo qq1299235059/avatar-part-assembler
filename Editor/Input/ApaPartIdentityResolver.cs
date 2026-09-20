@@ -30,9 +30,10 @@ namespace AvatarPartAssembler.Editor
     /// <b>Nothing is written while reading.</b> Derivation is a pure read: the build, the preview, and a repaint
     /// must never modify a shared authoring asset, because such a write is invisible, non-undoable, and can be
     /// persisted by an unrelated <c>AssetDatabase.SaveAssets()</c>. Persisting the id is an explicit author
-    /// action — saving the profile in the Part Authoring window, or <see cref="TryRepair"/> from the installer
-    /// inspector — and it writes exactly the derived id, so repairing a profile never changes the identity the
-    /// pipeline was already using.
+    /// action — saving the profile in the Part Authoring window, or calling <see cref="TryRepair"/> from developer
+    /// tooling — and it writes exactly the derived id, so repairing a profile never changes the identity the
+    /// pipeline was already using. The installer Inspector deliberately does not surface the id or a repair
+    /// button: that is developer detail, and it belongs to the authoring tooling.
     /// </para>
     /// <para>
     /// <b>Determinism.</b> <see cref="DeriveFromAssetIdentity"/> is a pure function of the asset GUID and the

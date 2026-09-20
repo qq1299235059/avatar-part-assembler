@@ -107,6 +107,7 @@ namespace AvatarPartAssembler.Editor
         private readonly ReadOnlyCollection<int> _blendShapeFrameCountView;
         private readonly ReadOnlyCollection<IReadOnlyList<BlendShapeFrameSnapshot>> _blendShapeFrameView;
         private readonly ReadOnlyCollection<Matrix4x4> _boneWorldToLocalView;
+        private string _contentFingerprint;
 
         /// <summary>Object name, for diagnostics only. Never used for matching.</summary>
         public string Name { get; }
@@ -149,10 +150,10 @@ namespace AvatarPartAssembler.Editor
         /// The source mesh's own bind poses, one per bone, or an empty list when the source has none.
         /// </summary>
         /// <remarks>
-        /// These are recorded for diagnostics and for the source-coherence checks only. M2 never reuses a source
-        /// bind pose in the output: the final bind pose is computed from the final scene relation (section 45),
-        /// because a bind pose carried over from a different hierarchy is wrong in exactly the way that makes a
-        /// mesh explode when an animation plays.
+        /// These are the authored rest-pose relation for the source renderer. The final table converts them into
+        /// the target renderer's local basis, so a live edit to a bone cannot silently become a new bind pose.
+        /// A legacy hand-built snapshot may omit them; the assembly core then retains its compatibility fallback
+        /// based on the captured live transform.
         /// </remarks>
         public IReadOnlyList<Matrix4x4> SkinBindPoses => _bindPoseView;
 
@@ -173,9 +174,9 @@ namespace AvatarPartAssembler.Editor
         /// skinned. Index-aligned with <see cref="BoneSignature"/>.
         /// </summary>
         /// <remarks>
-        /// This is the bone's actual transform, not a bind pose. The final bind pose is
-        /// <c>bone.worldToLocalMatrix * renderer.localToWorldMatrix</c> (section 45), so keeping the two apart
-        /// is what makes the formula meaningful.
+        /// This is the bone's actual live transform, not a bind pose. It is kept separate from the authored
+        /// <see cref="SkinBindPoses"/> so a current pose cannot overwrite the source rest-pose relation; it is
+        /// also used by the legacy fallback and transform validation.
         /// </remarks>
         public IReadOnlyList<Matrix4x4> BoneWorldToLocalMatrices => _boneWorldToLocalView;
 
@@ -217,6 +218,18 @@ namespace AvatarPartAssembler.Editor
         /// object graph at the same moment, which is what makes the signature reproducible.
         /// </remarks>
         public BoneSignature BoneSignature { get; }
+
+        /// <summary>
+        /// Deterministic content identity of the captured mesh. The value is cached after the first request so a
+        /// compatibility pass per installer does not hash the same blend-shape buffers repeatedly.
+        /// </summary>
+        /// <remarks>
+        /// This is a derived cache, not author data: it is intentionally excluded from the snapshot's
+        /// constructor and cannot affect any assembly decision other than the explicit profile compatibility
+        /// check.
+        /// </remarks>
+        public string ContentFingerprint =>
+            _contentFingerprint ?? (_contentFingerprint = ApaMeshFingerprint.OfSnapshot(this));
 
         /// <summary>Number of vertices.</summary>
         public int VertexCount => _vertices.Length;

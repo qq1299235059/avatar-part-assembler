@@ -62,9 +62,16 @@ namespace AvatarPartAssembler
         /// <see cref="ApaErrorCode.UnknownProfileSchema"/> rather than fall back to the removed position
         /// matching, which would pair a version-4 seam by a rule its author never used.
         /// </description></item>
+        /// <item><description>
+        /// <b>5</b> — the target compatibility profile records a deterministic mesh-content fingerprint, and the
+        /// part records the same fingerprint for its own source mesh. The fingerprints make a reimport that keeps
+        /// an asset GUID but changes vertex attributes, skin weights, UVs, or blend-shape deltas fail closed. The
+        /// fields default to empty when a version-4 asset is read; that asset remains readable but is refused by
+        /// compatibility validation until the author captures the current meshes again.
+        /// </description></item>
         /// </list>
         /// </remarks>
-        public const int CurrentSchemaVersion = 4;
+        public const int CurrentSchemaVersion = 5;
 
         /// <summary>
         /// The oldest schema version this build can read. Older profiles are rejected rather than migrated,
@@ -75,6 +82,7 @@ namespace AvatarPartAssembler
         [SerializeField] private int _schemaVersion = CurrentSchemaVersion;
         [SerializeField] private ApaPartIdentity _identity = new ApaPartIdentity();
         [SerializeField] private ApaAvatarCompatibilityProfile _compatibility = new ApaAvatarCompatibilityProfile();
+        [SerializeField] private string _partMeshFingerprint = string.Empty;
         [SerializeField] private ApaRemovalProfile _removal = new ApaRemovalProfile();
         [SerializeField] private ApaSeamProfile _seam = new ApaSeamProfile();
         [SerializeField] private ApaUvChannelSemantic[] _uvSemantics = Array.Empty<ApaUvChannelSemantic>();
@@ -92,7 +100,7 @@ namespace AvatarPartAssembler
             set => _schemaVersion = value;
         }
 
-        /// <summary>Stable identity, slot, and display name of this part.</summary>
+        /// <summary>Stable part identity. Legacy display/slot policy fields are ignored.</summary>
         public ApaPartIdentity Identity
         {
             get => _identity ?? (_identity = new ApaPartIdentity());
@@ -105,6 +113,24 @@ namespace AvatarPartAssembler
             get => _compatibility ?? (_compatibility = new ApaAvatarCompatibilityProfile());
             set => _compatibility = value ?? new ApaAvatarCompatibilityProfile();
         }
+
+        /// <summary>
+        /// Deterministic content fingerprint of the part mesh used when this profile was authored. Empty means
+        /// the profile predates schema 5 or the author has not captured the part mesh yet.
+        /// </summary>
+        /// <remarks>
+        /// The target body's fingerprint lives on <see cref="ApaAvatarCompatibilityProfile.MeshFingerprint"/>;
+        /// this companion value covers the other mesh whose vertex, UV, skinning, and blend-shape indices are
+        /// consumed by the profile. A mismatch is never repaired by replacing the stored value during a build.
+        /// </remarks>
+        public string PartMeshFingerprint
+        {
+            get => _partMeshFingerprint ?? string.Empty;
+            set => _partMeshFingerprint = value ?? string.Empty;
+        }
+
+        /// <summary>True when a part-mesh fingerprint was captured.</summary>
+        public bool HasPartMeshFingerprint => !string.IsNullOrEmpty(_partMeshFingerprint);
 
         /// <summary>The base body triangles this part removes.</summary>
         public ApaRemovalProfile Removal
@@ -190,6 +216,13 @@ namespace AvatarPartAssembler
         /// intended behaviour: the alternative — quietly re-deriving the pairing and the bone identity from
         /// avatar-root paths — is exactly the guessing M10 exists to remove.
         /// </para>
+        /// <para>
+        /// <b>The 4 → 5 migration is also a no-op accept.</b> Version-4 assets have no mesh-content fingerprints,
+        /// and a read must not invent one or rewrite the shared asset. They remain loadable for inspection, but
+        /// compatibility validation refuses them with <c>APA047</c> until the author captures a schema-5 profile.
+        /// A schema-5 profile records the target fingerprint and, when authored through the current window, the
+        /// part fingerprint as well; a present fingerprint that no longer matches is reported as <c>APA048</c>.
+        /// </para>
         /// </remarks>
         /// <returns>True when the profile is readable after migration; false when it cannot be migrated.</returns>
         public bool TryMigrate(out string message)
@@ -213,7 +246,7 @@ namespace AvatarPartAssembler
                 return false;
             }
 
-            // Versions 2, 3, and 4 are all readable as-is. The loop that used to step the version number here
+            // Versions 2 through 5 are all readable as-is. The loop that used to step the version number here
             // wrote to the asset; there is nothing to write, because every later schema field defaults to the
             // earlier behaviour. Keeping the profile's own version intact is what makes the read lossless.
             message = string.Empty;

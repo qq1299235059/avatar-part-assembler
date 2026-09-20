@@ -206,18 +206,27 @@ namespace AvatarPartAssembler.Tests
         }
 
         /// <summary>
-        /// Every bind pose is <c>bone.worldToLocalMatrix * renderer.localToWorldMatrix</c>, and a source bind
-        /// pose is never reused.
+        /// A captured source bind pose remains the authored rest-pose relation even when the live bone matrix is
+        /// different. This is what prevents an edited pose from becoming the new bind pose.
         /// </summary>
         [Test]
-        public void BindPose_IsBoneWorldToLocalTimesRendererLocalToWorld()
+        public void BindPose_PrefersAuthoredSourcePoseOverEditedLiveTransform()
         {
-            var renderer = Matrix4x4.Translate(new Vector3(10f, 0f, 0f));
-
-            // The body's own bind poses are deliberately nonsense: reusing them would be visible immediately.
-            var wrongBindPoses = MeshFixtures.BonesAt(
-                new Vector3(500f, 500f, 500f), new Vector3(500f, 500f, 500f));
-            var body = Body(wrongBindPoses);
+            var renderer = Matrix4x4.identity;
+            var sourceBindPoses = MeshFixtures.BonesAt(HipsPosition, SpinePosition);
+            var editedLiveBones = MeshFixtures.BonesAt(
+                new Vector3(0f, 20f, 0f), new Vector3(0f, 30f, 0f));
+            var positions = new List<Vector3>(MeshFixtures.Ring(4, 1f)) { new Vector3(0f, 0f, 1f) };
+            var weights = MeshFixtures.UniformWeights(positions.Count, 0);
+            weights[4] = MeshFixtures.BlendWeight(0, 0.5f, 1, 0.5f);
+            var body = MeshFixtures.SkinnedSnapshot(
+                "Body",
+                positions.ToArray(),
+                MeshFixtures.CapTriangles(4, 0, 4),
+                BodyBones,
+                weights,
+                editedLiveBones,
+                sourceBindPoses);
 
             var planning = ApaCore.Plan(Context(body, Part(), renderer));
             Assert.IsTrue(planning.Succeeded, planning.Issues.FormatAll());
@@ -230,9 +239,9 @@ namespace AvatarPartAssembler.Tests
             {
                 Assert.AreEqual(table.Count, binding.Mesh.bindposes.Length);
 
-                AssertVector(new Vector3(10f, -1f, 0f), binding.Mesh.bindposes[0].GetColumn(3));
-                AssertVector(new Vector3(10f, -2f, 0f), binding.Mesh.bindposes[1].GetColumn(3));
-                AssertVector(new Vector3(10f, -3f, 0f), binding.Mesh.bindposes[2].GetColumn(3));
+                AssertVector(new Vector3(0f, -1f, 0f), binding.Mesh.bindposes[0].GetColumn(3));
+                AssertVector(new Vector3(0f, -2f, 0f), binding.Mesh.bindposes[1].GetColumn(3));
+                AssertVector(new Vector3(0f, -3f, 0f), binding.Mesh.bindposes[2].GetColumn(3));
             }
             finally
             {
@@ -241,22 +250,34 @@ namespace AvatarPartAssembler.Tests
         }
 
         /// <summary>
-        /// The source's own bind poses must not be copied through when the transforms differ from the final
-        /// scene relation.
+        /// A source bind pose is converted into the target renderer's local basis for a part.
         /// </summary>
         [Test]
-        public void BindPose_DoesNotReuseSourceBindPoses()
+        public void BindPose_ConvertsPartSourcePoseIntoTargetBasis()
         {
-            var wrongBindPoses = MeshFixtures.BonesAt(new Vector3(500f, 500f, 500f), new Vector3(500f, 500f, 500f));
-            var result = ApaCore.Assemble(Context(Body(wrongBindPoses), Part()));
+            var partBindPoses = MeshFixtures.BonesAt(HipsPosition, PropPosition);
+            var partWeights = MeshFixtures.UniformWeights(5, 0);
+            partWeights[4] = new BoneWeight { boneIndex0 = 1, weight0 = 1f };
+            var partPositions = new List<Vector3>(MeshFixtures.Ring(4, 1f))
+            {
+                new Vector3(0f, 0f, -1f)
+            };
+            var part = MeshFixtures.SkinnedSnapshot(
+                "Part",
+                partPositions.ToArray(),
+                MeshFixtures.CapTriangles(4, 0, 4),
+                PartBones,
+                partWeights,
+                MeshFixtures.BonesAt(new Vector3(0f, 20f, 0f), new Vector3(0f, 30f, 0f)),
+                partBindPoses);
+            var result = ApaCore.Assemble(Context(Body(), part));
 
             Assert.IsTrue(result.Succeeded, result.Issues.FormatAll());
 
             try
             {
-                Assert.AreNotEqual(
-                    wrongBindPoses[0], result.Mesh.bindposes[0],
-                    "A source bind pose must not be reused as a final bind pose.");
+                AssertVector(new Vector3(0f, -1f, 0f), result.Mesh.bindposes[0].GetColumn(3));
+                AssertVector(new Vector3(0f, -3f, 0f), result.Mesh.bindposes[2].GetColumn(3));
             }
             finally
             {

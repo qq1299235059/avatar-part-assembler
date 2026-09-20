@@ -17,7 +17,7 @@
 
 ## 发布候选状态
 
-**当前版本是发布候选 `0.3.0-rc.3`（见 `package.json`）。它不是 1.0，完整验收清单仍未全部完成。**
+**当前版本是发布候选 `0.3.0-rc.6`（见 `package.json`）。它不是 1.0，完整验收清单仍未全部完成。**
 
 核心构建链已经不再只是源码评审：我们已经在 Unity 2022.3.22f1 中实际执行过 NDMF
 `AvatarProcessor`。真实构建成功替换了目标身体网格、消费了部件 Renderer 与 Installer，并把同路径的部件骨骼
@@ -78,7 +78,7 @@ NDMF、Modular Avatar 与 VRChat SDK 会被自动解析。
 ## 语言切换
 ## Play Mode 与 Gesture Manager
 
-`0.3.0-rc.3` 默认启用 Play Mode 兼容层。只要已加载场景中存在 `AvatarPartInstaller`，APA 会在进入
+`0.3.0-rc.6` 默认启用 Play Mode 兼容层。只要已加载场景中存在 `AvatarPartInstaller`，APA 会在进入
 Play Mode 前临时打开 NDMF 官方的 **Apply On Play**。
 
 APA 的预览构筑现在发生在 Unity 生成 **Play Mode 临时场景副本**时，通过 `IProcessSceneWithReport` 直接运行
@@ -90,6 +90,19 @@ VRCFury 对 Play Mode preprocess 的“一次性执行”保护。
 这里不会再使用 `EnteredPlayMode` 之后的二次构筑，也不会在模型已经被模拟器摆 Pose 后调用
 `Animator.Rebind()` 试图补救。这样可以避免“顶点仍按 T-Pose 构筑、骨骼却已经处于站立 Pose”导致的 bind pose
 错位和手臂严重扭曲。
+
+预览阶段，骨骼的局部位置/旋转/缩放被视为**实时姿态**，不会再因为拖动或缩放 Spine 而触发重新装配；生成的
+代理渲染器直接引用当前骨骼，因此网格会按 Unity 正常蒙皮跟随变化。只有骨骼改名、重父级或骨骼列表结构变化才会
+重新解析骨骼表。若进入 Play Mode 仍出现“未调整的网格套用已调整骨骼”的错位，应检查控制台是否出现
+`Play Mode scene prebuild failed` 或 APA 构建阻断诊断，因为这表示预构建没有在 Animator/模拟器之前完成。
+
+生成阶段的 bind pose 现在优先来自部件/身体网格自身的已保存绑定姿态，并按部件到目标渲染器的空间关系换算；
+不会把当前被作者移动或缩放后的骨骼姿态重新记录成 bind pose。旧的手工快照若没有携带源 bind pose，才会使用兼容性
+回退路径，因此正式 Unity 网格应保留完整的 `Mesh.bindposes`。
+
+部件 Mesh 指纹会在 Modular Avatar 合并骨架**之前**校验。因为 Modular Avatar 可能在合并时重写临时部件的蒙皮
+权重和 bind pose，Play Mode 日志里看到的临时 Mesh 指纹不应再与 Profile 直接比较；如果此时仍报 `APA048`，才表示
+合并前的源部件本身确实已经变化，需要重新捕获 Profile。
 
 整个过程只修改 Unity 的 Play Mode 临时场景副本，不会写回制作场景、Prefab 或模型资产。APA 会通过
 `SessionState` 记住进入 Play Mode 前原本的 NDMF Apply On Play 值，并在回到 Edit Mode 后恢复。若你确实想
@@ -179,7 +192,7 @@ VRCFury 对 Play Mode preprocess 的“一次性执行”保护。
 12. **`创建部件预制体`**：生成可移植的预制体并添加/更新其 `AvatarPartInstaller`；
     `更新预制体上的安装器` 则把已有预制体重新指向当前配置文件。
 
-`AvatarPartInstaller` 检查器显示构建实际使用的信息——部件标识、槽位、架构版本、签名状态、目标路径、
+`AvatarPartInstaller` 检查器显示构建实际使用的信息——稳定部件 ID、架构版本、签名状态、目标路径、
 移除/接缝/语义数量、解析到的目标——并提供 `验证`、`创建配置文件资产…`、`打开配置文件`、
 `在部件制作窗口中编辑` 等快捷操作。
 
@@ -226,19 +239,20 @@ M10 之前，部件骨骼的“身份”是它从角色根对象到自身的完�
 
 ## 创建配置文件（Part Profile）
 
-配置文件（`ApaPartProfile`）是**部件自描述**的序列化资产：它随预制体一起分发，内含部件标识与稳定部件 ID、
-兼容性签名、移除三角形集合、显式成对的接缝、UV 与材质语义、两个骨架选择、骨骼与形态键策略、冲突优先级
-与槽位模式。
+配置文件（`ApaPartProfile`）是**部件自描述**的序列化资产：它随预制体一起分发，内含稳定部件 ID、兼容性签名、
+移除三角形集合、显式成对的接缝、UV 与材质语义、两个骨架选择、骨骼与形态键策略。显示名称、槽位、槽位模式和
+冲突优先级不再属于部件身份，也不会参与构建；旧 profile 中的字段只为反序列化兼容而保留。
 
 要点：
 
-- 架构版本为 **4**。版本 2 与版本 3 的配置文件被**按无操作接受**（新增字段的默认值复现旧行为，读取时不会
+- 架构版本为 **5**。版本 2 至版本 4 的配置文件被**按无操作接受**（新增字段的默认值复现旧行为，读取时不会
   改写资产）；版本 1 被拒绝，必须重新制作。
 - **版本 3 的配置文件能读入，但不能直接构建。** 它没有两个骨架选择，接缝也是没有配对关系的无序集合，
   因此会在构建时以 `APA043`（缺骨架选择）与 `APA042`（缺接缝配对）阻止，直到你在窗口里重新制作一次：
   选择两个骨架、按世界坐标重新生成接缝。这不是迁移失败，而是缺少必须由作者声明的信息——工具不会替你猜。
-- 签名是拓扑相关数据的唯一护栏：网格 GUID（溯源用）→ 顶点数 → 各子网格索引数量与拓扑 → 形态键名称与
-  帧数 → 骨骼路径签名。护栏只**校验并阻止**，绝不会为了“让它通过”而改写配置文件。
+- 签名包含网格 GUID（仅溯源）→ 顶点数 → 各子网格索引数量与拓扑 → 形态键名称与帧数 → 骨骼路径签名，
+  以及覆盖 UV、蒙皮、bind pose 与形态键增量的确定性内容指纹。指纹能发现“顶点数没变但重新导入改变了属性”的
+  情况；缺失或不匹配分别以 `APA047` / `APA048` 阻断，需重新捕获，不会自动覆盖作者已经保存的指纹。
 - 签名缺少必需校验字段时以 `APA024` 阻止，与 `APA012`（目标已是另一个网格）区分开，因为两者的修复方式
   不同。
 - 写出的配置文件必须可被规划：`保存配置文件资产` 之前会执行完整验证与一次试运行装配，因此一个“验证通过
@@ -274,8 +288,9 @@ seq.Run(ApaAssemblyPass.Instance).PreviewingWith(ApaPreviewRegistration.CreateFi
   原始渲染器的网格、材质、层级与配置文件资产永远不会被写入。
 - **阻止即缺席**：当前输入非法时，过滤器不为该渲染器返回任何分组，因此 NDMF 没有代理，原始身体照常渲染，
   上一次“看起来成功”的预览不会在非法编辑后残留。原因会作为诊断报告。
-- 缓存键是内容**指纹**（`apa-preview-fnv1a64-v1`，FNV-1a，覆盖捕获输入、逐属性的网格数据、配置文件序列化、
-  变换、材质标识与数值容差），不使用进程随机化哈希；失败**不**缓存。
+- 缓存键是内容**指纹**（`apa-preview-fnv1a64-v2`，FNV-1a，覆盖捕获输入、逐属性的网格数据、配置文件序列化、
+  变换、材质标识与数值容差；实时骨骼姿态不参与缓存键，避免拖动骨骼时重新生成 bind pose），不使用进程随机化哈希；
+  失败**不**缓存。
 - 网格缓存有界（默认容量 4，加上活动租约），被淘汰的网格立即销毁；域重载前、退出时与播放模式切换前会整体
   销毁。
 - 预览开关出现在 NDMF 的 *Configure Previews* 中：
@@ -300,6 +315,17 @@ Transforming   （nadena.dev.modular-avatar 在此运行）
                - 构建已失败时立即返回
                - 角色没有生效的安装器时立即返回
                - 先验证合并后置条件，再开始处理
+               - 记录被消费的部件渲染器对象 → 所属分组的目标对象
+
+               ApaAnimatorRetargetPass 「将已消费部件的动画重定向到目标渲染器」
+               - 要求 AnimatorServicesContext，NDMF 会为该阶段打开它
+               - 对每个记录的对象对调用 ObjectPathRemapper.ReplaceObject(source, target)
+               - 上下文停用时把这些映射提交进生成的动画片段
+
+               （nadena.dev.modular-avatar.late-transform-stages 在此运行）
+               ApaEmptySourceCleanupPass 「移除已消费且变空的部件对象」
+               - 排在 Modular Avatar 后期变换阶段与重定向阶段之后
+               - 仅当 ApaSourceObjectCleanup 判定为空时才移除记录下来的源对象
 ```
 
 四个刻意的性质：
@@ -317,7 +343,41 @@ Transforming   （nadena.dev.modular-avatar 在此运行）
 临时合并配置挂在**所选部件骨架**上并指向**所选目标骨架**，且始终写入空前缀、空后缀、不做推断：Modular
 Avatar 的“名称完全相同才合并”因此恰好复现骨架相对身份所描述的关系，而不是在它之外再引入一套名称启发式。
 
-两个阶段都默认只对 VRChat 角色运行。
+四个阶段都默认只对 VRChat 角色运行。装配之后的两个阶段各自声明了自己的顺序：重定向阶段要求
+AnimatorServicesContext，清理阶段声明排在 Modular Avatar 的后期变换插件之后、以及重定向阶段之后。
+
+### Modular Avatar Merge Animator 兼容
+
+部件预制体可以带一个 Modular Avatar **Merge Animator**（通常是挂在部件根对象上的 Relative 路径模式），
+其控制器动画作用于该部件渲染器，最常见的是形态键（Blend Shape）。Modular Avatar 会虚拟化该控制器，并给每条
+记录下来的路径加上部件根对象的角色相对路径前缀，于是动画片段按“打开动画服务上下文时”的路径指向部件渲染器。
+APA 会把该渲染器的几何体装配进目标身体渲染器并消费掉它；如果没有重定向，动画会继续指向一个已被替换的对象，
+形态键就不再响应。
+
+APA 会用 NDMF 的 `AnimatorServicesContext.ObjectPathRemapper.ReplaceObject` 登记“被消费的部件渲染器对象 →
+所属分组的目标渲染器对象”，NDMF 在上下文停用时把映射提交进生成的动画片段 —— 这正是 Modular Avatar 合并掉一根
+骨骼时使用的同一套机制。本包不直接编辑任何动画片段、不写入序列化控制器，也不修改任何 Modular Avatar 文件。
+
+时序就是契约，这也是它必须是一个独立 NDMF 阶段的原因：
+
+| 步骤 | 原因 |
+| --- | --- |
+| 在装配阶段、销毁被消费的渲染器组件之前捕获对象对 | 已销毁的组件无法再取得它的 GameObject，而映射需要的是对象 |
+| 重定向阶段**要求** `AnimatorServicesContext` | APA 的 Transforming 序列运行时 Modular Avatar 早已关闭它用过的上下文，因此由 NDMF 为该阶段打开；这次激活自身的停用会提交映射 |
+| 重定向阶段排在装配阶段之后 | 只有真的发生过装配，才可能登记映射 |
+| 清理阶段排在 `nadena.dev.modular-avatar.late-transform-stages` 与重定向阶段之后 | 后期阶段会清除残留的 Modular Avatar 组件（否则残留的 `ModularAvatarMergeAnimator` 会让本该为空的对象存活），而重定向阶段需要源对象仍然存在 |
+
+没有装配任何东西时不会登记映射，构建报告已带错误时两个阶段都不会改动构建。
+
+### 空的源对象清理
+
+装配只销毁部件渲染器的**组件**，刻意保留它所在的对象及其子树，因为生成的网格可能蒙皮到那里的骨骼。于是渲染器
+所在对象常常只剩下一个 Transform。APA 只移除这类对象，且仅限这类对象：对象必须存活、不是角色根、有父对象、
+没有子对象，并且除 Transform 外不带任何组件。有子对象、有约束、有 PhysBone、有编辑用组件，或有一个丢失脚本的
+对象都会被保留。
+
+`MeshRenderer` 部件会留下它的 `MeshFilter`（装配只消费渲染器组件），因此这类对象不算空、会被保留：清理只移除
+装配确实能留下的空对象，绝不做猜测。
 
 ### 两个工作流共享同一个处理器
 
@@ -328,7 +388,7 @@ Avatar 的“名称完全相同才合并”因此恰好复现骨架相对身份�
 
 ## 策略总览
 
-### 目标分组与冲突优先级
+### 目标分组与稳定部件 ID
 
 | 情况 | 结果 |
 | --- | --- |
@@ -338,27 +398,15 @@ Avatar 的“名称完全相同才合并”因此恰好复现骨架相对身份�
 | 分组 A 合法、分组 B 非法 | **整个角色失败**；分组相关问题在 detail 中带 `group=<路径>` |
 | 完全没有生效的安装器 | 不适用：不验证、不修改、不报告 |
 
-`ApaPartIdentity.ConflictPriority` 序列化在配置文件上（随预制体分发），0 表示未声明且完全惰性：
+部件处理顺序由稳定部件 ID 和安装器相对路径确定。稳定 ID 在首次制作时分配，重命名或移动层级不会改变它；
+重复 ID 仍会阻断构建，因为它无法提供唯一的诊断与排序身份。旧 profile 中的槽位、槽位模式和冲突优先级
+字段不再参与任何决策。
 
-| 情况 | 结果 |
-| --- | --- |
-| 分组内没有任何部件声明优先级 | 顺序与引入优先级之前完全一致 |
-| 移除区域重叠，每个声明方都声明了优先级且最高值唯一 | 成功；**警告 `APA035 reason=removal-overlap-resolved-by-priority`** 指明归属方、其优先级、落败方与有界采样。无论哪种情况移除集合都是并集，优先级只决定区域的*归属* |
-| 移除区域重叠，至少一方未声明（0） | 阻断 `APA010 reason=undeclared-priority` |
-| 移除区域重叠，最高优先级相同 | 阻断 `APA010 reason=priority-tie` |
-| 负数优先级 | 阻断 `APA037 reason=negative-conflict-priority` |
-
-### 槽位与移除区域
+### 移除区域
 
 | # | 情况 | 结果 |
 | --- | --- | --- |
-| S1 | `自定义` 槽位 | 任意数量部件，无冲突 |
-| S2 | 非自定义槽位，恰好一个 `替换` | 通过 |
-| S3 | 非自定义槽位，两个及以上 `替换` | 阻断 `APA013 DUPLICATE_PART_SLOT reason=duplicate-replace-slot` |
-| S4 | 非自定义槽位，一个 `替换` + N 个 `附加` | 通过 |
-| S5 | 非自定义槽位，N 个 `附加`，没有 `替换` | 通过 |
-| S6 | `附加` 部件声明了非空移除区域 | 阻断 `APA013 reason=augment-declares-removal` |
-| S7 | 槽位取值不在定义列表中 | 阻断 `APA023 INVALID_PART_SLOT` |
+| S1 | 多个部件声明同一移除三角形 | 仍由移除规则报告冲突；部件处理顺序由稳定部件 ID 确定，旧的优先级归属策略不再启用 |
 | R1 | 地址在其子网格范围内 | 只移除该三角形 |
 | R2 | 非负三角形索引越界 | 阻断 `APA017 REMOVAL_INDEX_OUT_OF_RANGE` |
 | R3 | 地址本身畸形（负子网格/负三角形/非三角形子网格） | 阻断 `APA026 INVALID_TRIANGLE_ADDRESS` |
@@ -430,7 +478,7 @@ clamp 与 `MirrorOnce` 停在边界纹素上。
 
 | 性质 | 规则 |
 | --- | --- |
-| 容差 | 默认 `1e-4`（0.1 mm），窗口接受 `1e-7` 到 `1e-2`；用世界单位，因为接缝就是按世界坐标制作的 |
+| 容差 | 默认 `1e-4`（0.1 mm），窗口接受 `1e-7` 到 `1e-3`；用世界单位，因为接缝就是按世界坐标制作的。超过上限会被拒绝，而不是静默扩大搜索范围 |
 | 配对 | `Base.VertexIndices[i]` 与 `Part.VertexIndices[i]` 是一处焊接；结果本身就是配对，不再有“两侧无序集合按位置猜配对”这一步 |
 | 确定性 | 部件顶点按索引升序访问，每个取最近的、尚未被占用的目标顶点；距离相同时取索引较小的目标顶点 |
 | 一对一 | 同一个目标顶点不会被占用两次（`APA003 reason=duplicate-base-claim`） |
@@ -447,6 +495,15 @@ clamp 与 `MirrorOnce` 停在边界纹素上。
 
 手工拾取两侧接缝顶点、两个索引列表文本框与两个场景视图拾取模式都已移除：它们要求作者在两个不同的空间里
 维持同一份一一对应关系，而这份关系正是工具可以一次性算准的。
+
+如果部件作者在 Blender 等来源中使用了专用的接缝顶点组，推荐在导出/导入工具中把该组转换为明确的候选顶点
+索引，再调用候选索引版本的生成接口。不要把“某个顶点组名称会原样出现在 Unity Mesh 上”当作运行时契约：
+不同导入器可能丢弃或重排来源组名。没有候选索引时，生成器仍可兼容地处理全网格，但作者必须确认生成结果只覆盖
+真正的接缝环。
+
+接缝处每个高于权重阈值的骨骼影响都必须存在于目标 Avatar 的骨骼范围内。部件专属骨骼、空身份权重组或目标没有
+的骨骼若到达接缝，会被 `APA049 SEAM_WEIGHT_BONE_NOT_IN_TARGET` 阻断；这不是把权重自动改到最近骨骼的场景，
+应回到部件源文件清理权重后重新保存。
 
 焊接时保留的**基础**顶点拥有位置、法线、切线、颜色与蒙皮权重；UV 是唯一例外（同名语义在容差内必须一致，
 否则 `APA004`；仅一侧存在时使用该侧的值）。
@@ -529,6 +586,8 @@ APA020 INVALID_SEMANTIC_NAME             APA050 UV_SEMANTIC_CHANNEL_ABSENT
 APA021 DEGENERATE_OUTPUT_TRIANGLE        APA999 INTERNAL_ERROR
 APA022 INVALID_EPSILON                   APA042 SEAM_PAIRING_REQUIRED
 APA043 ARMATURE_SELECTION_INVALID        APA044 BONE_OUTSIDE_SELECTED_ARMATURE
+APA047 PROFILE_MESH_FINGERPRINT_MISSING   APA048 PROFILE_MESH_FINGERPRINT_MISMATCH
+APA049 SEAM_WEIGHT_BONE_NOT_IN_TARGET
 ```
 
 `APA041` 由 M9 分配，只在制作层产生，用于“黑白遮罩无法转换成三角形选择”；具体条件由 `detail` 中稳定的
@@ -547,7 +606,10 @@ UV 通道越界或不存在、通道长度与顶点数不符、阈值非有限�
 - `APA044 BONE_OUTSIDE_SELECTED_ARMATURE` —— 一根携带权重的骨骼不在其渲染器所选骨架内，
   `reason=bone-outside-armature`。
 
-`APA045` 与更大的编号是下一个可用错误码。M9 的 `APA041` 仍是唯一的遮罩拒绝码，遮罩的采样规则
+`APA047`–`APA049` 由 M12 分配：`APA047` 表示旧配置没有目标网格内容指纹，`APA048` 表示目标或部件网格
+与已保存指纹不一致（通常是属性级重新导入），两者都要求重新捕获；`APA049` 表示接缝顶点的有效骨骼权重
+不在目标 Avatar 骨骼范围内，必须回源文件清理权重。`APA045` 与 `APA046` 仍保留给既有的 UV/接缝信息语义。
+M9 的 `APA041` 仍是唯一的遮罩拒绝码，遮罩的采样规则
 （7 个采样点、至少 4 个、RGB 亮度、忽略 alpha、唯一读回路径、不按格式拒绝、按整数纹素索引寻址）没有改变。
 诊断按确定顺序排序并去重，因此相同输入产生相同报告——即使验证器与规划器独立发现了同一缺陷。
 
@@ -661,9 +723,9 @@ Runtime 程序集保持零依赖、不引入 `UnityEditor`：运行时的预制�
 | Seam pair / pairing version | 接缝配对 / 配对版本 |
 | Weight threshold (weight epsilon) | 权重阈值（权重容差，默认 `1e-5`） |
 | Legacy merge names (path / prefix / suffix / inference) | 旧版合并名称（路径 / 前缀 / 后缀 / 名称推断，仅保留序列化往返） |
-| Conflict priority | 冲突优先级 |
+| Legacy conflict priority | 旧版冲突优先级（仅兼容读取，不参与构建） |
 | Profile | 配置文件 |
-| Slot / slot mode | 槽位 / 槽位模式 |
+| Legacy slot / slot mode | 旧版槽位 / 槽位模式（仅兼容读取，不参与构建） |
 | Blend shape | 形态键 |
 | Authoring window | 部件编辑窗口 |
 | Installer | 安装器 |

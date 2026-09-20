@@ -156,7 +156,21 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// A millimetre would already pair vertices that are visibly apart on a real avatar, so the slider stops
         /// well short of a value that could silently weld unrelated geometry.
         /// </remarks>
-        public const float MaximumTolerance = 1e-2f;
+        public const float MaximumTolerance = 1e-3f;
+
+        /// <summary>
+        /// Generates pairs from all vertices. Use the candidate overload when the authoring source has marked a
+        /// seam ring (for example with a dedicated vertex group) and only those vertices are allowed to pair.
+        /// </summary>
+        public static ApaSeamWorldMatchResult Match(
+            Renderer targetRenderer,
+            Mesh targetMesh,
+            Renderer partRenderer,
+            Mesh partMesh,
+            float tolerance)
+        {
+            return Match(targetRenderer, targetMesh, partRenderer, partMesh, tolerance, null, null);
+        }
 
         /// <summary>
         /// Matches the part mesh's vertices against the target mesh's vertices by world position.
@@ -166,12 +180,16 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <param name="partRenderer">The part renderer whose transform defines the part's world space.</param>
         /// <param name="partMesh">The part mesh, in its rest pose.</param>
         /// <param name="tolerance">World-space tolerance. Values outside the documented range are refused.</param>
+        /// <param name="targetCandidateIndices">Optional explicit target seam candidates; null means all vertices.</param>
+        /// <param name="partCandidateIndices">Optional explicit part seam candidates; null means all vertices.</param>
         public static ApaSeamWorldMatchResult Match(
             Renderer targetRenderer,
             Mesh targetMesh,
             Renderer partRenderer,
             Mesh partMesh,
-            float tolerance)
+            float tolerance,
+            IReadOnlyList<int> targetCandidateIndices,
+            IReadOnlyList<int> partCandidateIndices)
         {
             if (!ApaNumericPolicy.IsFinite(tolerance) || tolerance <= 0f)
             {
@@ -182,6 +200,20 @@ namespace AvatarPartAssembler.Editor.Authoring
                         "The seam tolerance must be a positive finite number of world units, but was " +
                         Format(tolerance) + ".",
                         detail: "reason=invalid-seam-tolerance; tolerance=" + Format(tolerance)),
+                    tolerance);
+            }
+
+            if (tolerance > MaximumTolerance)
+            {
+                return ApaSeamWorldMatchResult.Failure(
+                    ValidationIssue.Error(
+                        ApaErrorCode.InvalidEpsilon,
+                        ApaIssuePhase.Configuration,
+                        "The seam tolerance is " + Format(tolerance) + " world unit(s), above the safe maximum of " +
+                        Format(MaximumTolerance) + ". Restrict pairing to explicitly authored seam candidates " +
+                        "or place the seam vertices closer together.",
+                        detail: "reason=seam-tolerance-too-large; tolerance=" + Format(tolerance) +
+                                "; maximum=" + Format(MaximumTolerance)),
                     tolerance);
             }
 
@@ -240,6 +272,13 @@ namespace AvatarPartAssembler.Editor.Authoring
                     tolerance);
             }
 
+            if (!TryBuildCandidateMask(targetCandidateIndices, targetVertices.Length, "target",
+                    out var targetCandidates, out var targetCandidateCount, out var targetIssue))
+                return ApaSeamWorldMatchResult.Failure(targetIssue, tolerance);
+            if (!TryBuildCandidateMask(partCandidateIndices, partVertices.Length, "part",
+                    out var partCandidates, out var partCandidateCount, out var partIssue))
+                return ApaSeamWorldMatchResult.Failure(partIssue, tolerance);
+
             var targetToWorld = targetRenderer.transform.localToWorldMatrix;
             var partToWorld = partRenderer.transform.localToWorldMatrix;
 
@@ -270,6 +309,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             for (var p = 0; p < partVertices.Length; p++)
             {
+                if (!partCandidates[p]) continue;
                 var world = partToWorld.MultiplyPoint3x4(partVertices[p]);
                 if (!IsFinite(world))
                 {
@@ -284,7 +324,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                         tolerance);
                 }
 
-                if (!lookup.TryFindNearestFree(world, toleranceSquared, claimed, out var best))
+                if (!lookup.TryFindNearestFree(world, toleranceSquared, claimed, targetCandidates, out var best))
                 {
                     unmatched++;
                     continue;
@@ -306,8 +346,8 @@ namespace AvatarPartAssembler.Editor.Authoring
                         "space in their rest pose: adjust the tolerance, or place the part so its seam coincides " +
                         "with the body's.",
                         detail: "reason=no-world-coincident-vertices; tolerance=" + Format(tolerance) +
-                                "; partVertices=" + partVertices.Length +
-                                "; targetVertices=" + worldTargets.Length),
+                                "; partVertices=" + partCandidateCount +
+                                "; targetVertices=" + targetCandidateCount),
                     tolerance);
             }
 
@@ -315,9 +355,59 @@ namespace AvatarPartAssembler.Editor.Authoring
                 baseIndices.ToArray(),
                 partIndices.ToArray(),
                 worldTargets.Length,
-                partVertices.Length,
+                partCandidateCount,
                 unmatched,
                 tolerance);
+        }
+
+        private static bool TryBuildCandidateMask(
+            IReadOnlyList<int> candidates,
+            int vertexCount,
+            string side,
+            out bool[] mask,
+            out int candidateCount,
+            out ValidationIssue issue)
+        {
+            mask = new bool[vertexCount];
+            issue = null;
+            if (candidates == null)
+            {
+                for (var i = 0; i < vertexCount; i++) mask[i] = true;
+                candidateCount = vertexCount;
+                return true;
+            }
+
+            candidateCount = candidates.Count;
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                var index = candidates[i];
+                if (index < 0 || index >= vertexCount)
+                {
+                    issue = ValidationIssue.Error(
+                        ApaErrorCode.InvalidSeamSelection,
+                        ApaIssuePhase.Seam,
+                        "The " + side + " seam candidate index " + index + " is outside the mesh vertex range.",
+                        sourceIndex: index,
+                        detail: "side=" + side + "; reason=invalid-candidate-index; index=" + index +
+                                "; vertexCount=" + vertexCount);
+                    return false;
+                }
+
+                if (mask[index])
+                {
+                    issue = ValidationIssue.Error(
+                        ApaErrorCode.InvalidSeamSelection,
+                        ApaIssuePhase.Seam,
+                        "The " + side + " seam candidate list contains vertex " + index + " more than once.",
+                        sourceIndex: index,
+                        detail: "side=" + side + "; reason=duplicate-candidate-index; index=" + index);
+                    return false;
+                }
+
+                mask[index] = true;
+            }
+
+            return true;
         }
 
         private static bool IsFinite(Vector3 value)
@@ -388,6 +478,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                 Vector3 position,
                 float toleranceSquared,
                 bool[] claimed,
+                bool[] eligible,
                 out int best)
             {
                 best = -1;
@@ -408,6 +499,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                             for (var b = 0; b < bucket.Count; b++)
                             {
                                 var index = bucket[b];
+                                if (eligible != null && !eligible[index]) continue;
                                 if (claimed[index]) continue;
 
                                 var delta = _points[index] - position;

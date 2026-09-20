@@ -1,4 +1,4 @@
-# User acceptance checklist — 0.3.0-rc.3 release candidate
+# User acceptance checklist — 0.3.0-rc.6 release candidate
 
 **Status: partially exercised; full acceptance remains open.** The package has now compiled
 against Unity 2022.3.22f1's real Bee/Roslyn references and a real NDMF `AvatarProcessor`
@@ -7,8 +7,8 @@ mesh, consumed the APA part renderer/installer, and verified the post-Modular-Av
 path. The rows below are still the authoritative full acceptance plan: any row not explicitly
 run and recorded is still not a pass, and end-to-end VRChat upload has not yet been accepted.
 
-- Package version under test: **`0.3.0-rc.3`** (`Packages/dev.avatar-part-assembler/package.json`)
-- Profile schema version under test: **4** (`ApaPartProfile.CurrentSchemaVersion`)
+- Package version under test: **`0.3.0-rc.6`** (`Packages/dev.avatar-part-assembler/package.json`)
+- Profile schema version under test: **5** (`ApaPartProfile.CurrentSchemaVersion`)
 - Project: `C:\\编辑中工程\\niu11`
 - Project: `C:\编辑中工程\niu11`
 - Expected environment: Unity **2022.3.22f1**, VRChat SDK Avatars **3.10.4**,
@@ -69,7 +69,7 @@ Legend for the Result column: `pass` / `fail` / `blocked` / `not run`.
 | 2.4 | Authoring suite | Run the `Authoring*` test classes specifically: `AuthoringAssetPathTests`, `AuthoringProfileDraftTests`, `AuthoringRemovalMaskTests`, `AuthoringSeamSelectionTests`, `AuthoringSemanticValidationTests`. | All pass. These are the asset-safety rules; a failure here is a release blocker. | |
 | 2.5 | Policy suite | Run `MultiPartConflictPolicyTests`, `TargetGroupingTests`, `InstallerPriorityTests`, `PolicyDeterminismTests`, `UvChannelDeclarationTests`. | All pass. These carry the M6 policy truth table the README documents. | |
 | 2.6 | Preview contract suite | Run `PreviewStaticContractTests`. | All pass, **none ignored**. Note that several of these tests `Assert.Ignore` when a preview source file cannot be found — an ignored test here means the contract was not actually checked. | |
-| 2.7 | NDMF seam suite | Run `NdmfMergeArmaturePlanTests`, `BuildPipelineAssemblySeamTests`. | All pass. | |
+| 2.7 | NDMF seam suite | Run `NdmfMergeArmaturePlanTests`, `BuildPipelineAssemblySeamTests`, `AnimatorRetargetContractTests`. | All pass. | |
 | 2.8 | Repeat the suite | Run the whole suite a second time in the same session. | Identical result. No cross-test state, no order dependence, no leakage between runs. | |
 
 ---
@@ -109,7 +109,7 @@ Prerequisite: 1.1 passes. Use a body with at least one part prefab and an
 | 4.3 | Assembled mesh is on the clone only | Inspect the built clone (the NDMF-generated avatar), then the authoring scene. | The clone's renderer carries the generated mesh; the authoring renderer still carries the original. | |
 | 4.4 | Material slots | Count the renderer's material slots and compare with the documented policy result for your configuration. | Matches the README's material truth table; the base material asset is never replaced. | |
 | 4.5 | Bone table | Inspect the built renderer's `bones`. | Body bones first in body order, then new part bones by canonical part order; a merged part bone appears once, not twice. | |
-| 4.6 | Bind poses | Inspect the generated mesh's bind poses. | Each equals `finalBone.worldToLocalMatrix * finalRenderer.localToWorldMatrix` for the corresponding bone (a source bind pose reused unchanged is a failure). | |
+| 4.6 | Bind poses | Inspect the generated mesh's bind poses after moving a source bone before Play Mode, and compare them with the source mesh's authored bind data. | Bind poses remain stable across the live pose edit and are converted into the target renderer's local basis; a current edited pose must never become a new bind pose. Legacy snapshots without source bind data may use the documented compatibility fallback. | |
 | 4.7 | Blend shapes | Expand the built mesh's blend shapes. | Body shapes first, then new part shapes; same-named base/part shapes merged; every frame present. | |
 | 4.8 | Part geometry is not drawn twice | Look at the built avatar. | The part appears once; the consumed part renderers are gone from the clone. | |
 | 4.9 | Blocking diagnostic is visible and blocks | Introduce a blocking condition (for example two parts claiming one non-Custom slot, or a removal overlap with no declared priority on every claimant) and build. | The NDMF error panel shows the APA code and the **build/upload is stopped**, not merely logged. | |
@@ -123,6 +123,8 @@ Prerequisite: 1.1 passes. Use a body with at least one part prefab and an
 | 4.17 | No armature-lock job | After the build, watch the avatar in the Editor for a few seconds. | No merged bone transform is being rewritten every editor update; no armature-lock artefact. | |
 | 4.18 | `EditorOnly` trap | Place a part under an object tagged `EditorOnly` (or confirm no part is). | The part's geometry is either correctly absent **and reported**, or correctly present. It must not silently disappear from the build. | |
 | 4.19 | Object references in diagnostics | Click the object reference in an APA diagnostic in the NDMF error panel. | It selects the avatar or the reported part; no destroyed-object exception. | |
+| 4.20 | Merge Animator retargeting | On a part prefab that carries a Modular Avatar **Merge Animator** (Relative path mode, on the part root) whose controller animates the part renderer's blend shapes, build the avatar, then inspect the built FX controller's clip binding paths (and toggle the blend shape in Play Mode / Gesture Manager). | The clip's binding path is the **target body renderer's** path after the build, not the consumed part renderer's path, and the blend shape responds. The build log lists `Retarget consumed part animation onto the target renderer` after the assembly pass. | |
+| 4.21 | Empty source object cleanup | Build, then inspect the clone around the consumed part. | A consumed part renderer object left carrying only a Transform, with no children, is **gone**; an object that still carries a component or a child is **still there**. A `MeshRenderer` part keeps its `MeshFilter`, so its object stays — that is the documented boundary of the predicate, not a failure. The build log lists `Remove consumed part objects left empty` after Modular Avatar's late transform stages. | |
 
 ---
 
@@ -273,7 +275,7 @@ before it builds; until then the build refuses it with `APA042` and `APA043`.
 | 12.5 | An unreferenced bone slot no longer blocks with `APA008` | Use a mesh whose bone array contains a slot no vertex references, including a `null` entry; validate and build, then inspect the built renderer's `bones`. Then give a **weighted** bone no stable identity, then move a **weighted** bone outside the armature selected for its renderer, then zero a vertex's whole weight set (or set every influence at or below `1e-5`) and validate each time. | The unreferenced and `null` slots raise no `APA008` and do not enter the built bone table. `APA008` still blocks a **weighted** bone with no stable identity, and only weighted bones are checked. A weighted bone outside the armature selected for its renderer blocks with `APA044 BONE_OUTSIDE_SELECTED_ARMATURE reason=bone-outside-armature`, while an unweighted bone outside it does not. The zeroed vertex reports `APA031 reason=zero-weight-sum`, and an influence at or below `ApaNumericPolicy.WeightEpsilon` (default `1e-5`) is cleared to index 0 with weight 0 rather than remapped. | |
 | 12.6 | The signature is captured automatically on first use | With a fresh profile whose compatibility signature has never been captured, press `Validate`. Then, from an uncaptured state again (clear the signature or recreate the profile first if the previous action captured it), press `Save Profile Asset`, then `Create Part Prefab`, then `Update Installer On Prefab`, one at a time. Finally, make the target renderer or its mesh unusable on an uncaptured profile and press `Validate`. | Each action captures the signature once at its start and then performs the action, so no first-use `APA024` and no spurious `APA012` mismatch appears. A capture that cannot run is reported as a diagnostic and leaves the profile uncaptured — no empty or partial signature is written, and the action it preceded does not proceed as if the capture had succeeded. | |
 | 12.7 | An already captured signature is not overwritten | Capture a signature (first-use capture, or the explicit `Capture Signature` button), then change the body so it mismatches — swap the base mesh for one with different topology, or edit its skinning data — and press `Validate`. Then press `Capture Signature` and, separately, `Clear Signature`. | Validation blocks with the mismatch the profile has (`APA012`, `reason=bone-signature-mismatch` when skinning data is present) and the stored signature is **unchanged**: the mismatch is reported, never silently repaired by a re-capture. `Capture Signature` overwrites deliberately, and `Clear Signature` returns the profile to the uncaptured state, so the next action captures again. | |
-| 12.8 | World-position seam generation on a scaled hierarchy | Put the part under an avatar level scaled non-uniformly (for example `(2, 1, 0.5)`), pair a body region with it, run the world-position generate action, and record the pair count and the preview. Change the level's scale and generate again. Run generate twice in a row with nothing changed in between. Try tolerance `1e-4`, `1e-7` and `1e-2`. Point the part at a body region whose meshes share no coincident vertex and generate. | The pairs follow **world** distance, not avatar-local distance, so rescaling the level changes which vertices fall within tolerance. The tolerance is stated in world units, defaults to `1e-4` (0.1 mm) and accepts `1e-7` through `1e-2`. The pairing is one-to-one — no target vertex is claimed twice — and identical on two consecutive runs. When the meshes share no world-coincident vertex, the generator reports `APA002 SEAM_POSITION_MISMATCH reason=no-world-coincident-vertices` instead of writing an empty or partial seam. | |
+| 12.8 | World-position seam generation on a scaled hierarchy | Put the part under an avatar level scaled non-uniformly (for example `(2, 1, 0.5)`), pair a body region with it, run the world-position generate action, and record the pair count and the preview. Change the level's scale and generate again. Run generate twice in a row with nothing changed in between. Try tolerance `1e-4`, `1e-7` and the hard limit `1e-3`; verify `1e-2` is refused. Point the part at a body region whose meshes share no coincident vertex and generate. | The pairs follow **world** distance, not avatar-local distance, so rescaling the level changes which vertices fall within tolerance. The tolerance is stated in world units, defaults to `1e-4` (0.1 mm) and accepts `1e-7` through `1e-3`; larger values report `APA022 INVALID_EPSILON` with `reason=seam-tolerance-too-large`. The pairing is one-to-one — no target vertex is claimed twice — and identical on two consecutive runs. When the meshes share no world-coincident vertex, the generator reports `APA002 SEAM_POSITION_MISMATCH reason=no-world-coincident-vertices` instead of writing an empty or partial seam. | |
 | 12.9 | The collapsed removal address list | With a removal set far larger than the display cap (apply a mask, or add addresses), open **Removal Region** and read the list header, then expand it and remove one of the drawn rows. Edit the same set through the numeric address field and through each mask Apply Mode (`Replace Selection`, `Add To Selection`, `Subtract From Selection`). | Collapsed, the list reads `Addresses (N)` with the true count. Expanded, it draws at most 28 rows — each one still removable — plus a summary of how many addresses are not shown, so nothing about the underlying set is truncated: the numeric address field and all three Apply Modes still edit the whole selection. The 28-row cap is this list's foldout limit only; the shared `MaxListedRows` (200) used by the other lists is unchanged. | |
 | 12.10 | Both UI languages | With the M10 surfaces in view (both armature pickers, `Suggest Armatures`, the seam tolerance, pair count and preview, the world-position generate action, the collapsed address list) and with a failure forced for `APA042`, `APA043` and `APA044`, switch `English` → `简体中文` and read every new or changed label, tooltip, warning and error. Switch back to `English`. | Every new or changed string is drawn in Simplified Chinese, and no raw English enum member name is shown anywhere. The `APAxxx` codes, their English mnemonic titles and every `reason=…` token stay untranslated, as group 10 requires. Switching back to English reproduces the English text byte-for-byte, including the armature picker labels, `Suggest Armatures`, the seam pair count and tolerance, the world-position generate action, the folded address list and the `APA042`/`APA043`/`APA044` descriptions. | |
 | 12.11 | The body owns a path it declares but does not weight (M11) | Give the body renderer a bone list of `Hips`, `Spine` while every body vertex weights only `Hips`, and weight a part vertex to the part's own `Spine` at a different position. Run `Validate`, `Dry-Run Assembly`, then a build, and inspect the built renderer's `bones` and the final bone table in the report. Then weight a part vertex to a path the body does **not** declare, and separately add a second body bone with the same path as `Spine` and weight the part to that path. | The built `bones` array contains the body's `Spine` Transform — not the part's — for the part's `Spine` weight, the table entry for `Spine` is body-owned (empty owner, the body's source bone index) with the body's bind pose, and exactly one `APA007 reason=part-bone-remapped-to-target` **Info** line names the part and `redirectedBones=2`. No `APA008` appears. A path the body does not declare is still appended as a part bone, and the duplicated body path blocks with `APA008 reason=duplicate-bone-identity`; an unreferenced duplicated slot still blocks nothing. | |
@@ -292,7 +294,7 @@ Fill this in when every group has been run. A group with any `fail` is not accep
 | 4. Build | 19 | | | |
 | 5. Deletion / restoration | 6 | | | |
 | 6. Determinism | 7 | | | |
-| 7. Schema migration (v2/v3 → v4) | 7 | | | |
+| 7. Schema migration (v2/v3/v4 → v5) | 7 | | | |
 | 8. Performance | 5 | | | |
 | 9. Ecosystem | 11 | | | |
 | 10. Language | 7 | | | |
@@ -312,7 +314,7 @@ VRChat SDK: ____________
 
 This checklist originated in an isolated documentation copy while the M7 code integration ran
 elsewhere. The statements below were later reconciled against the package and remain useful
-for the current `0.3.0-rc.3` candidate; where runtime validation has since occurred, the
+for the current `0.3.0-rc.6` candidate; where runtime validation has since occurred, the
 newer status at the top of this file takes precedence.
 
 1. **Assembly references.** The asmdefs are wired: `dev.avatar-part-assembler.editor.ndmf`
@@ -324,7 +326,7 @@ newer status at the top of this file takes precedence.
 2. **Preview registration.** The registration is wired in `ApaNdmfPlugin.Configure`:
    `seq.Run(ApaAssemblyPass.Instance).PreviewingWith(ApaPreviewRegistration.CreateFilter())`
    on the real Transforming pass. `PreviewStaticContractTests` locks the statement in
-3. **Version string.** `package.json` now reads **`0.3.0-rc.3`**, matching this document and
+3. **Version string.** `package.json` now reads **`0.3.0-rc.6`**, matching this document and
    the README.
 4. **Test count.** The suite is part of this release candidate. No count is quoted in
    prose anywhere; check 2.3 compares the executed count against the `[Test]` methods in
@@ -336,7 +338,7 @@ newer status at the top of this file takes precedence.
    `Editor/Authoring/ApaAuthoringErrorCode.cs` carries aliases (not a second table) and
    delegates titles. M10's `APA042`, `APA043`, and `APA044` are **core** codes recorded in
    `ApaReservedCodes.Milestone10` and reachable through `IsMilestone10Code`; the next free
-   code is `APA045`. The README's registry section documents all of them.
+   codes are `APA045`–`APA049`. The README's registry section documents all of them.
 6. **`IsModularAvatarAvailable` is still a declarative capability check.** It is a
    hard-coded `true` (`Editor/Integration/MergeArmatureGenerator.cs`), justified by
    `package.json` declaring Modular Avatar as a required VPM dependency. It does **not**

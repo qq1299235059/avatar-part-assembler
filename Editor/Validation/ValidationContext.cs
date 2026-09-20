@@ -60,6 +60,13 @@ namespace AvatarPartAssembler.Editor
         public bool CompatibilityVerified { get; }
 
         /// <summary>
+        /// True when the NDMF Generating pass already compared every part mesh with its profile before Modular
+        /// Avatar rewrote skinning data during armature merge. The later post-merge context must not compare the
+        /// intentionally rewritten temporary mesh with the pre-merge authoring fingerprint a second time.
+        /// </summary>
+        public bool PartMeshFingerprintsVerifiedBeforeMerge { get; }
+
+        /// <summary>
         /// The target renderer group this context belongs to: the resolved target renderer's avatar-root-relative
         /// path, or an empty string for a single-target context built by the legacy entry points.
         /// </summary>
@@ -90,13 +97,18 @@ namespace AvatarPartAssembler.Editor
         /// against this base. Optional and defaulting to false, so every schema-2 call site keeps its exact
         /// behaviour.
         /// </param>
+        /// <param name="partMeshFingerprintsVerifiedBeforeMerge">
+        /// True when an earlier NDMF Generating pass validated source part meshes before armature merging. Optional
+        /// and defaulting to false for preview and direct core callers.
+        /// </param>
         public ValidationContext(
             BaseSnapshot baseSnapshot,
             IReadOnlyList<PartSnapshot> parts,
             ApaNumericPolicy numericPolicy,
             ApaAvatarCompatibilityProfile expectedCompatibility,
             string groupKey = null,
-            bool compatibilityVerified = false)
+            bool compatibilityVerified = false,
+            bool partMeshFingerprintsVerifiedBeforeMerge = false)
         {
             Base = baseSnapshot;
             var partCopy = new PartSnapshot[parts?.Count ?? 0];
@@ -106,6 +118,7 @@ namespace AvatarPartAssembler.Editor
             ExpectedCompatibility = CopySignature(expectedCompatibility);
             GroupKey = groupKey ?? string.Empty;
             CompatibilityVerified = compatibilityVerified;
+            PartMeshFingerprintsVerifiedBeforeMerge = partMeshFingerprintsVerifiedBeforeMerge;
         }
 
         private static ApaAvatarCompatibilityProfile CopySignature(ApaAvatarCompatibilityProfile source)
@@ -116,6 +129,7 @@ namespace AvatarPartAssembler.Editor
                 MeshName = source.MeshName,
                 RendererPath = source.RendererPath,
                 MeshGuid = source.MeshGuid,
+                MeshFingerprint = source.MeshFingerprint,
                 VertexCount = source.VertexCount,
                 SubMeshIndexCounts = Copy(source.SubMeshIndexCounts),
                 SubMeshTopologyValues = Copy(source.SubMeshTopologyValues),
@@ -141,21 +155,24 @@ namespace AvatarPartAssembler.Editor
         public ValidationContext WithBase(BaseSnapshot baseSnapshot)
         {
             return new ValidationContext(
-                baseSnapshot, Parts, NumericPolicy, ExpectedCompatibility, GroupKey, CompatibilityVerified);
+                baseSnapshot, Parts, NumericPolicy, ExpectedCompatibility, GroupKey, CompatibilityVerified,
+                PartMeshFingerprintsVerifiedBeforeMerge);
         }
 
         /// <summary>Creates a copy of this context with a different part list.</summary>
         public ValidationContext WithParts(IReadOnlyList<PartSnapshot> parts)
         {
             return new ValidationContext(
-                Base, parts, NumericPolicy, ExpectedCompatibility, GroupKey, CompatibilityVerified);
+                Base, parts, NumericPolicy, ExpectedCompatibility, GroupKey, CompatibilityVerified,
+                PartMeshFingerprintsVerifiedBeforeMerge);
         }
 
         /// <summary>Creates a copy of this context with a different target group key.</summary>
         public ValidationContext WithGroupKey(string groupKey)
         {
             return new ValidationContext(
-                Base, Parts, NumericPolicy, ExpectedCompatibility, groupKey, CompatibilityVerified);
+                Base, Parts, NumericPolicy, ExpectedCompatibility, groupKey, CompatibilityVerified,
+                PartMeshFingerprintsVerifiedBeforeMerge);
         }
 
         /// <summary>

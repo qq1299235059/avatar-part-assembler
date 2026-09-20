@@ -319,16 +319,14 @@ namespace AvatarPartAssembler.Editor.Authoring
                 ? profile.MaterialSemantics
                 : ApaCore.InferMaterialSemantics(snapshot.SubMeshCount, materials);
 
-            var slot = profile.Identity != null ? profile.Identity.Slot : ApaPartSlot.Custom;
             var orderingKey = new PartOrderingKey(
-                slot,
                 partId,
                 MeshSnapshotFactory.RelativePath(avatarRoot.transform, partRenderer.transform));
 
             return new PartSnapshot(
                 partId,
-                profile.Identity != null ? profile.Identity.DisplayName : string.Empty,
-                slot,
+                string.Empty,
+                ApaPartSlot.Custom,
                 orderingKey,
                 snapshot,
                 transforms,
@@ -340,7 +338,8 @@ namespace AvatarPartAssembler.Editor.Authoring
                 profile.Seam,
                 materials,
                 PartPolicySnapshot.FromProfile(profile),
-                partRenderer);
+                partRenderer,
+                profile.PartMeshFingerprint);
         }
     }
 }

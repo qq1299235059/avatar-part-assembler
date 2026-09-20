@@ -210,7 +210,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             window._prefabPath = ApaAuthoringAssetPaths.DefaultPrefabPath(
                 window._selection.OutputFolder,
-                window._draft.Identity.DisplayName);
+                window._selection.PartRoot != null ? window._selection.PartRoot.name : "AvatarPart");
 
             window.MarkSelectionDirty();
             window.Repaint();
@@ -597,6 +597,8 @@ namespace AvatarPartAssembler.Editor.Authoring
             EditorGUILayout.LabelField(Tr("Bones"), profile.BonePaths.Length.ToString());
             EditorGUILayout.LabelField(
                 Tr("Mesh GUID"), profile.HasMeshGuid ? profile.MeshGuid : Tr("(not an asset)"));
+            EditorGUILayout.LabelField(
+                Tr("Mesh Fingerprint"), profile.HasMeshFingerprint ? profile.MeshFingerprint : Tr("(missing)"));
 
             if (!profile.HasCompleteSafetyData)
             {
@@ -654,46 +656,6 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             EditorGUILayout.Space();
             EditorGUILayout.LabelField(Tr("Part Identity"), EditorStyles.boldLabel);
-
-            EditorGUI.BeginChangeCheck();
-
-            var displayName = EditorGUILayout.TextField(Tr("Display Name"), _draft.Identity.DisplayName);
-            var slot = SlotPopup(Tr("Slot"), _draft.Identity.Slot);
-
-            // The M6 slot-sharing and conflict-priority policies. Both are inert until declared: the default
-            // (Replace, priority 0) is the strict behaviour, so a profile that never touches these fields behaves
-            // exactly as it did before the fields existed.
-            var slotMode = SlotModePopup(
-                Content("Slot Mode", "Replace: this part owns the slot exclusively (two Replace parts on " +
-                                     "one non-Custom slot block with APA013). Augment: this part shares " +
-                                     "the slot and must declare no removal triangles."),
-                _draft.Identity.SlotMode);
-
-            var conflictPriority = EditorGUILayout.IntField(
-                Content("Conflict Priority", "0 means undeclared. A removal-region overlap is resolved " +
-                                             "only when every claimant declares a priority greater than " +
-                                             "zero and the highest is unique (APA035); otherwise it " +
-                                             "blocks with APA010. Negative values block with APA037."),
-                _draft.Identity.ConflictPriority);
-
-            if (EditorGUI.EndChangeCheck())
-            {
-                _draft.Identity.DisplayName = displayName;
-                _draft.Identity.Slot = slot;
-                _draft.Identity.SlotMode = slotMode;
-                _draft.Identity.ConflictPriority = conflictPriority;
-
-                // The identity feeds the ordering key and the slot rules, so a cached live check is stale.
-                MarkSelectionDirty();
-            }
-
-            if (_draft.Identity.SlotMode == ApaPartSlotMode.Augment && !_draft.Removal.IsEmpty)
-            {
-                EditorGUILayout.HelpBox(
-                    Tr("An Augment part declares removal triangles. An augmenting part does not own a body region, so " +
-                       "the profile will be refused with APA013 (reason=augment-declares-removal). Clear the removal " +
-                       "region or switch the slot mode back to Replace."), MessageType.Error);
-            }
 
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(Tr("Stable Part Id"),
@@ -757,9 +719,9 @@ namespace AvatarPartAssembler.Editor.Authoring
             {
                 Undo.RecordObject(this, Tr("Reset Output Paths"));
                 _profilePath = ApaAuthoringAssetPaths.DefaultProfilePath(
-                    _selection.OutputFolder, _draft.Identity.DisplayName);
+                    _selection.OutputFolder, _selection.PartRoot != null ? _selection.PartRoot.name : "AvatarPart");
                 _prefabPath = ApaAuthoringAssetPaths.DefaultPrefabPath(
-                    _selection.OutputFolder, _draft.Identity.DisplayName);
+                    _selection.OutputFolder, _selection.PartRoot != null ? _selection.PartRoot.name : "AvatarPart");
                 MarkSelectionDirty();
             }
 
@@ -1816,7 +1778,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             _draft.EnsureStablePartId();
             _profilePath = AssetDatabase.GetAssetPath(asset);
             _prefabPath = ApaAuthoringAssetPaths.DefaultPrefabPath(
-                _selection.OutputFolder, _draft.Identity.DisplayName);
+                _selection.OutputFolder, _selection.PartRoot != null ? _selection.PartRoot.name : "AvatarPart");
 
             ClearResults(needsRepair
                 ? TrFormat(
@@ -2042,6 +2004,11 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private bool PassesPreWriteValidation(string action)
         {
+            // Schema-5 profiles carry a part-mesh fingerprint so attribute-only reimports are caught just like
+            // target-body reimports. Capture it lazily for a new/legacy draft, but never overwrite an existing
+            // value: a non-empty mismatch is evidence that the author must explicitly recapture the profile.
+            EnsurePartFingerprintCaptured();
+
             var validation = ApaAuthoringValidation.Validate(_selection, _draft);
             _validation = validation.Validation;
 
@@ -2073,6 +2040,22 @@ namespace AvatarPartAssembler.Editor.Authoring
                 return false;
             }
 
+            return true;
+        }
+
+        private bool EnsurePartFingerprintCaptured()
+        {
+            if (!string.IsNullOrEmpty(_draft.PartMeshFingerprint)) return true;
+
+            var mesh = _selection.PartMesh;
+            if (mesh == null || !mesh.isReadable) return false;
+
+            var fingerprint = ApaMeshFingerprint.OfMesh(mesh);
+            if (string.IsNullOrEmpty(fingerprint)) return false;
+
+            Undo.RecordObject(this, Tr("Capture Part Mesh Fingerprint"));
+            _draft.PartMeshFingerprint = fingerprint;
+            MarkSelectionDirty();
             return true;
         }
 

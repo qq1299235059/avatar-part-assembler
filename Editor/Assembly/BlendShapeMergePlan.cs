@@ -384,7 +384,7 @@ namespace AvatarPartAssembler.Editor
 
         private static string DescribePart(PartSnapshot part)
         {
-            return string.IsNullOrEmpty(part.DisplayName) ? "'" + part.PartId + "'" : "'" + part.DisplayName + "'";
+            return "'" + (part != null ? part.PartId : string.Empty) + "'";
         }
 
         private static string MeshName(MeshSnapshot mesh)

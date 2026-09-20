@@ -45,6 +45,17 @@ namespace AvatarPartAssembler.Editor.Ndmf
     /// unrelated avatar in the same project cannot be blocked by this plugin.
     /// </para>
     /// <para>
+    /// <b>What this pass consumed is recorded for the steps that follow it.</b> A successful run captures the
+    /// consumed part renderer objects and their group's target renderer objects in the build state before the
+    /// renderer components are destroyed. <see cref="ApaAnimatorRetargetPass"/> hands those pairs to NDMF's
+    /// object path remapper while the animator services context is live, so a recorded animation that addressed a
+    /// consumed part renderer addresses the target renderer instead, and
+    /// <see cref="ApaEmptySourceCleanupPass"/> removes a source object that the run left genuinely empty. This
+    /// pass does neither itself: it must not run with the animator extension open, because Modular Avatar has
+    /// already closed it by the time this pass executes, and the cleanup has to wait for Modular Avatar's late
+    /// transform stages.
+    /// </para>
+    /// <para>
     /// All of the work lives in <see cref="ApaBuildProcessor.Process(ApaBuildRequest)"/>, which is the entry
     /// point M4's preview will call; this pass only decides whether to run and how to report.
     /// </para>
@@ -126,8 +137,17 @@ namespace AvatarPartAssembler.Editor.Ndmf
                 null,
                 null,
                 context.ObjectRegistry,
-                allowPostMergePartArmatureScope: true);
+                allowPostMergePartArmatureScope: true,
+                partMeshFingerprintsVerifiedBeforeMerge: true);
             var result = ApaBuildProcessor.Process(request);
+
+            // The consumed part renderer objects and the target objects their geometry went into are recorded in
+            // the build state while both are still alive. The retarget step runs later in this phase, with the
+            // animator services context live, and hands each pair to NDMF's object path remapper so a recorded
+            // animation path that addressed the part renderer follows the geometry into the target renderer; the
+            // cleanup step runs after Modular Avatar's late transform stages and removes a source object the run
+            // left empty. Neither step can re-derive the pair: the renderer components are destroyed by now.
+            artifacts.RecordRendererReplacements(result.RetargetMappings);
 
             // NDMF recalculates UV distribution metrics for every temporary mesh the avatar references when the
             // build finishes (BuildContext.Finish -> RecalculateAllMeshes). That metric measures how UVs are

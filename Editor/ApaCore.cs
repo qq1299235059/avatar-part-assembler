@@ -100,13 +100,15 @@ namespace AvatarPartAssembler.Editor
             GameObject avatarRoot,
             ApaNumericPolicy numericPolicy,
             out List<ValidationIssue> issues,
-            bool allowPostMergePartArmatureScope = false)
+            bool allowPostMergePartArmatureScope = false,
+            bool partMeshFingerprintsVerifiedBeforeMerge = false)
         {
             return TargetGroupAssembly.Plan(
                 avatarRoot,
                 numericPolicy,
                 out issues,
-                allowPostMergePartArmatureScope);
+                allowPostMergePartArmatureScope,
+                partMeshFingerprintsVerifiedBeforeMerge);
         }
 
         /// <summary>

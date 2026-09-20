@@ -233,7 +233,11 @@ namespace AvatarPartAssembler.Editor.Ndmf
 
         public void OnProcessScene(Scene scene, BuildReport report)
         {
-            if (!Application.isPlaying) return;
+            // Unity can invoke IProcessSceneWithReport while the temporary Play Mode scene is still being loaded,
+            // before Application.isPlaying flips true. The editor transition flag is the reliable gate here;
+            // otherwise the early prebuild is skipped and Apply On Play falls back to Awake, after an emulator may
+            // already have posed the bones.
+            if (!EditorApplication.isPlayingOrWillChangePlaymode) return;
             if (!ApaPlayModeCompatibility.IsEnabled) return;
             if (!Config.ApplyOnPlay) return;
             if (!scene.IsValid() || !scene.isLoaded || EditorSceneManager.IsPreviewScene(scene)) return;

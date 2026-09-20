@@ -205,6 +205,27 @@ namespace AvatarPartAssembler.Editor.Authoring
                     detail: "missing=" + DescribeMissing(profile) + "; " + profile.DescribeCapture()));
             }
 
+            if (!profile.HasMeshFingerprint)
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.ProfileMeshFingerprintMissing,
+                    ApaIssuePhase.Compatibility,
+                    "The captured target signature has no mesh content fingerprint. Recapture the profile so " +
+                    "attribute-only mesh reimports cannot invalidate its topology-indexed data silently.",
+                    detail: "reason=mesh-fingerprint-missing"));
+            }
+            else if (mesh != null && mesh.isReadable &&
+                     !string.Equals(profile.MeshFingerprint, ApaMeshFingerprint.OfMesh(mesh), StringComparison.Ordinal))
+            {
+                issues.Add(ValidationIssue.Error(
+                    ApaErrorCode.ProfileMeshFingerprintMismatch,
+                    ApaIssuePhase.Compatibility,
+                    "The live target mesh does not match the captured content fingerprint. Recapture the profile " +
+                    "against the intended body before saving or building.",
+                    detail: "reason=mesh-fingerprint-mismatch; expected=" + profile.MeshFingerprint +
+                            "; actual=" + ApaMeshFingerprint.OfMesh(mesh)));
+            }
+
             return issues;
         }
 
@@ -301,6 +322,9 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (profile.VertexCount != mesh.vertexCount) return false;
             if (!HasSameTopology(profile, mesh)) return false;
             if (!HasSameBlendShapes(profile, mesh)) return false;
+            if (!profile.HasMeshFingerprint) return false;
+            if (!string.Equals(profile.MeshFingerprint, ApaMeshFingerprint.OfMesh(mesh), StringComparison.Ordinal))
+                return false;
             return true;
         }
 
@@ -322,6 +346,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             {
                 missing.Add(Localization.ApaLocalization.Tr("blend shape frame counts"));
             }
+            if (!profile.HasMeshFingerprint) missing.Add(Localization.ApaLocalization.Tr("mesh fingerprint"));
 
             return missing.Count == 0
                 ? Localization.ApaLocalization.Tr("none")

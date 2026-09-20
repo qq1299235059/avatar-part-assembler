@@ -77,6 +77,14 @@ namespace AvatarPartAssembler.Editor.Ndmf
                 var partRoot = installer.ResolvePartRoot();
                 if (partRoot == null) continue;
 
+                // This is deliberately before Modular Avatar consumes the merge configuration. Modular Avatar
+                // may clone/rewrite a skinned part mesh while merging its armature, so the post-merge renderer is
+                // not the same content that the authoring profile recorded. Validate the source mesh here and let
+                // the later assembly context trust this one pre-merge check instead of rejecting the rewritten
+                // temporary mesh with APA048.
+                var partId = ApaPartIdentityResolver.ResolvePartId(installer);
+                if (!ValidatePartMeshBeforeMerge(installer, partRoot, partId, issues)) continue;
+
                 // The profile is a shared authoring asset: read the non-mutating accessor, never the materializing
                 // Bones property. A null bone profile means "no policy", which the generator already defines as
                 // exact-name matching, and it must not be materialized onto the asset from a build.
@@ -87,7 +95,7 @@ namespace AvatarPartAssembler.Editor.Ndmf
                     partRoot,
                     // The same resolution the context builder used, so a merge diagnostic and an assembly
                     // diagnostic name a legacy part by the same (derived) id.
-                    ApaPartIdentityResolver.ResolvePartId(installer),
+                    partId,
                     bones,
                     partRoots);
 
@@ -103,6 +111,28 @@ namespace AvatarPartAssembler.Editor.Ndmf
             }
 
             ApaNdmfDiagnostics.Report(issues, references);
+        }
+
+        private static bool ValidatePartMeshBeforeMerge(
+            AvatarPartInstaller installer,
+            GameObject partRoot,
+            string partId,
+            List<ValidationIssue> issues)
+        {
+            var profile = installer != null ? installer.Profile : null;
+            if (profile == null || !profile.HasPartMeshFingerprint) return true;
+
+            var renderer = partRoot != null ? partRoot.GetComponentInChildren<Renderer>(true) : null;
+            var mesh = renderer is SkinnedMeshRenderer skinned
+                ? skinned.sharedMesh
+                : renderer != null ? renderer.GetComponent<MeshFilter>()?.sharedMesh : null;
+            var actual = ApaMeshFingerprint.OfMesh(mesh);
+
+            return CompatibilityRule.ValidatePartMeshFingerprint(
+                partId,
+                profile.PartMeshFingerprint,
+                actual,
+                issues);
         }
 
         /// <summary>

@@ -25,6 +25,8 @@ namespace AvatarPartAssembler
         [SerializeField] private GameObject _partRoot;
         [SerializeField] private GameObject _targetRendererObject;
         [SerializeField] private bool _enabledForBuild = true;
+        [SerializeField] private bool _followAvatarBones = true;
+        [SerializeField] private bool _includeScale = true;
 
         /// <summary>
         /// The authoring profile describing this part. May be assigned directly, or left null when the profile
@@ -68,6 +70,44 @@ namespace AvatarPartAssembler
         {
             get => _enabledForBuild;
             set => _enabledForBuild = value;
+        }
+
+        /// <summary>
+        /// The author's standing preference for the Inspector's live bone fit: while it is on, this part's bones
+        /// follow the avatar's bones as the avatar is posed.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Stored on the component rather than in Inspector state, because the preference outlives the Inspector
+        /// window and the domain reload: an author who turned following on expects it to still be on when the
+        /// project is reopened. It defaults to on for a newly added installer, which is the safe direction — a
+        /// part that follows the avatar's pose cannot drift away from the body it was authored against.
+        /// </para>
+        /// <para>
+        /// This is a preference, not build data. Nothing in validation, planning, or the build reads it: the
+        /// editor-side follow loop (<c>ApaBoneFollowRuntime</c>) is the only consumer, and the loop itself never
+        /// runs in play mode. The author can turn it off at any time; the part stays where it is.
+        /// </para>
+        /// </remarks>
+        public bool FollowAvatarBones
+        {
+            get => _followAvatarBones;
+            set => _followAvatarBones = value;
+        }
+
+        /// <summary>
+        /// Whether the live bone fit also copies each avatar bone's scale onto the matching part bone. Defaults
+        /// to on, and is stored beside <see cref="FollowAvatarBones"/> for the same reason.
+        /// </summary>
+        /// <remarks>
+        /// Copying scale matters when the avatar's bones have been rescaled: a part bone that keeps the old
+        /// scale drags its subtree away from the merged result. Like the follow preference it is editor-only
+        /// state and never affects the build.
+        /// </remarks>
+        public bool IncludeScale
+        {
+            get => _includeScale;
+            set => _includeScale = value;
         }
 
         /// <summary>
@@ -132,8 +172,7 @@ namespace AvatarPartAssembler
         /// </summary>
         public ApaPartSlot ResolveSlot()
         {
-            var identity = _profile != null ? _profile.IdentityOrNull : null;
-            return identity != null ? identity.Slot : ApaPartSlot.Custom;
+            return ApaPartSlot.Custom;
         }
 
         /// <summary>
@@ -142,8 +181,7 @@ namespace AvatarPartAssembler
         /// </summary>
         public ApaPartSlotMode ResolveSlotMode()
         {
-            var identity = _profile != null ? _profile.IdentityOrNull : null;
-            return identity != null ? identity.SlotMode : ApaPartSlotMode.Replace;
+            return ApaPartSlotMode.Replace;
         }
 
         /// <summary>
@@ -152,13 +190,18 @@ namespace AvatarPartAssembler
         /// </summary>
         public int ResolveConflictPriority()
         {
-            var identity = _profile != null ? _profile.IdentityOrNull : null;
-            return identity != null ? identity.ConflictPriority : 0;
+            return 0;
         }
 
         private void Reset()
         {
             _partRoot = gameObject;
+
+            // Both bone-fit preferences start enabled on a newly added installer: following the avatar's pose is
+            // the behavior that keeps a part on the body it was authored against, and the author can turn either
+            // option off in the Inspector.
+            _followAvatarBones = true;
+            _includeScale = true;
         }
 
         private void OnValidate()

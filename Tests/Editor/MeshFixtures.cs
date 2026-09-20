@@ -434,7 +434,8 @@ namespace AvatarPartAssembler.Tests
                 SubMeshTopologyValues = topologies,
                 BlendShapeNames = names,
                 BlendShapeFrameCounts = frames,
-                BonePaths = ToArray(mesh.BoneSignature.Paths)
+                BonePaths = ToArray(mesh.BoneSignature.Paths),
+                MeshFingerprint = mesh.ContentFingerprint
             };
         }
 

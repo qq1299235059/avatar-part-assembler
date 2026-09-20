@@ -129,15 +129,9 @@ namespace AvatarPartAssembler.Editor
         /// </summary>
         /// <remarks>
         /// <para>
-        /// These are the transforms the final bind pose is computed from (M2, section 44.3): the bind pose is
-        /// <c>bone.worldToLocalMatrix * renderer.localToWorldMatrix</c>, evaluated for the final hierarchy.
-        /// </para>
-        /// <para>
-        /// A <b>bind pose is never substituted here.</b> A bind pose is the transform that maps a mesh vertex
-        /// into bone space at bind time; a bone's world-to-local matrix is the transform of the bone right now.
-        /// They coincide only for a bone at the origin with no rotation, so falling back to
-        /// <c>mesh.bindposes</c> would produce a plausible-looking table whose every entry is wrong, and the
-        /// avatar would only reveal it once an animation plays (section 21).
+        /// These are the live transforms captured alongside the source bind poses. They are retained for
+        /// hierarchy/transform validation and for legacy snapshots that did not carry source bind poses; normal
+        /// Unity mesh captures use <c>mesh.bindposes</c> as the stable authored relation instead.
         /// </para>
         /// <para>
         /// A null bone is recorded as <see cref="Matrix4x4.zero"/> rather than skipped, so the array stays
@@ -156,7 +150,9 @@ namespace AvatarPartAssembler.Editor
         }
 
         /// <summary>
-        /// Captures the final renderer's <c>localToWorldMatrix</c>, which the bind-pose formula multiplies by.
+        /// Captures the final renderer's <c>localToWorldMatrix</c>, retained for legacy snapshots without source
+        /// bind poses. Normal captures convert the source mesh's authored bind pose through the source-to-target
+        /// matrix instead.
         /// </summary>
         public static Matrix4x4 CaptureRendererLocalToWorld(Renderer renderer)
         {
@@ -385,6 +381,7 @@ namespace AvatarPartAssembler.Editor
             profile.BlendShapeFrameCounts = frames;
 
             profile.BonePaths = boneSignature != null ? ToArray(boneSignature.Paths) : Array.Empty<string>();
+            profile.MeshFingerprint = ApaMeshFingerprint.OfMesh(mesh);
 
             return profile;
         }

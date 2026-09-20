@@ -33,10 +33,11 @@ namespace AvatarPartAssembler.Editor.Preview
     /// not, the node returns a replacement built from the live capture — never <c>null</c>, because NDMF answers
     /// <c>null</c> by rebuilding from the same group data the refresh just rejected.
     /// </description></item>
-    /// <item><description>
-    /// <c>Dispose</c> releases the lease and unregisters the debug entry. It does not destroy the mesh: the cache
-    /// owns it, and a replaced node may still be drawn by the pipeline generation that is being retired.
-    /// </description></item>
+        /// <item><description>
+        /// <c>Dispose</c> releases the lease, unregisters the debug entry, and destroys the shadow bones this node
+        /// created. It does not destroy the mesh: the cache owns it, and a replaced node may still be drawn by the
+        /// pipeline generation that is being retired.
+        /// </description></item>
     /// </list>
     /// <para>
     /// <b>Nothing escapes into the pipeline.</b> Node construction runs inside NDMF's build task; an exception
@@ -64,6 +65,7 @@ namespace AvatarPartAssembler.Editor.Preview
         private readonly ApaPreviewBoneMap _boneMap;
         private readonly IReadOnlyList<ApaPreviewBlendShapeBinding> _shapeBindings;
         private readonly ApaPreviewDebugData _debugData;
+        private readonly List<GameObject> _shadowObjects;
 
         /// <summary>
         /// The request this node was built from. It is kept for one purpose: a node that fails later can hand it to
@@ -102,7 +104,8 @@ namespace AvatarPartAssembler.Editor.Preview
             ApaPreviewBoneMap boneMap,
             IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings,
             ApaPreviewDebugData debugData,
-            bool cannotRepresent)
+            bool cannotRepresent,
+            List<GameObject> shadowObjects)
         {
             _avatarRoot = request.AvatarRoot;
             _targetRenderer = request.TargetRenderer;
@@ -118,6 +121,7 @@ namespace AvatarPartAssembler.Editor.Preview
             _shapeBindings = shapeBindings ?? new List<ApaPreviewBlendShapeBinding>();
             _debugData = debugData;
             _cannotRepresent = cannotRepresent;
+            _shadowObjects = shadowObjects != null ? shadowObjects : new List<GameObject>();
 
             WhatChanged = RenderAspects.Mesh | RenderAspects.Material | RenderAspects.Shapes;
         }
@@ -146,6 +150,7 @@ namespace AvatarPartAssembler.Editor.Preview
             }
 
             ApaPreviewLease lease = null;
+            List<GameObject> shadowObjects = new List<GameObject>();
             try
             {
                 lease = BuildThroughCore(request);
@@ -158,6 +163,12 @@ namespace AvatarPartAssembler.Editor.Preview
                 {
                     var partRenderers = ApaPreviewDiscovery.BuildPartRendererMap(request.Installers);
                     boneMap = ApaPreviewBoneMap.Resolve(lease.Plan, request.AvatarRoot, request.Installers);
+
+                    // The authoring hierarchy has not merged the part armature into the avatar's, so part-side
+                    // bones in the table would ignore avatar motion and the drawn mesh would drift away from the
+                    // posed skeleton. Shadow bones parented under the avatar counterparts reproduce the build's
+                    // merge, and the hierarchy makes the preview follow the skeleton without per-frame work.
+                    boneMap = ApaPreviewShadowBones.Attach(boneMap, shadowObjects);
 
                     shapeBindings = ApaPreviewBlendShapeMap.Build(lease.Plan, request.TargetRenderer, partRenderers);
 
@@ -180,7 +191,8 @@ namespace AvatarPartAssembler.Editor.Preview
 
                 var debugData = ApaPreviewDebugData.Create(request, lease.Plan, lease.Issues, boneMap);
 
-                var node = new ApaPreviewNode(request, lease, boneMap, shapeBindings, debugData, cannotRepresent);
+                var node = new ApaPreviewNode(
+                    request, lease, boneMap, shapeBindings, debugData, cannotRepresent, shadowObjects);
 
                 if (debugData != null) ApaPreviewDebugOverlay.Register(request.TargetRenderer, debugData);
 
@@ -189,8 +201,9 @@ namespace AvatarPartAssembler.Editor.Preview
             catch (Exception e)
             {
                 // The lease is released before any node exists, because nothing else can release it: Dispose is
-                // only reachable through a constructed node.
+                // only reachable through a constructed node. Shadow bones created along the way die with it.
                 if (lease != null) lease.Dispose();
+                DestroyShadowBones(shadowObjects);
 
                 ApaPreviewDiagnostics.ReportInternalFailure(
                     "Preview node construction for '" + request.DiagnosticKey + "'", e);
@@ -484,6 +497,24 @@ namespace AvatarPartAssembler.Editor.Preview
             // on eviction or teardown, which is what keeps a pipeline swap from destroying a mesh the outgoing
             // generation is still drawing.
             if (_lease != null) _lease.Dispose();
+
+            // The shadow bones are scene objects this node owns, unlike the cached mesh: they die with it.
+            DestroyShadowBones(_shadowObjects);
+        }
+
+        /// <summary>
+        /// Destroys the shadow bones the node created, tolerating repeats and already-destroyed objects.
+        /// </summary>
+        private static void DestroyShadowBones(List<GameObject> shadows)
+        {
+            if (shadows == null) return;
+
+            for (var i = 0; i < shadows.Count; i++)
+            {
+                if (shadows[i] != null) UnityEngine.Object.Destroy(shadows[i]);
+            }
+
+            shadows.Clear();
         }
 
         /// <summary>

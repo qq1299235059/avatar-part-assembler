@@ -26,7 +26,7 @@ namespace AvatarPartAssembler
     /// APA042 through APA044 (see <see cref="ApaReservedCodes.Milestone10"/>), and M11 allocated APA045
     /// (<c>SEAM_UV_PRESERVED</c>) and APA046 (<c>PART_ID_DERIVED</c>), see
     /// <see cref="ApaReservedCodes.Milestone11"/>.
-    /// <c>APA047</c> through <c>APA049</c> are free; the next free code is <c>APA047</c>.
+    /// M12 allocates APA047 through APA049 for mesh-content fingerprints and seam skinning safety.
     /// </para>
     /// </remarks>
     public static class ApaErrorCode
@@ -537,6 +537,29 @@ namespace AvatarPartAssembler
         /// </remarks>
         public const string PartIdDerived = "APA046";
 
+        /// <summary>A profile has no deterministic content fingerprint for the mesh it describes.</summary>
+        /// <remarks>
+        /// The profile may have been authored by a pre-fingerprint build, or the capture could not read the
+        /// mesh. A GUID and topology summary are not enough to prove that a reimport preserved the attributes the
+        /// assembler consumes, so the author must capture the profile again.
+        /// </remarks>
+        public const string ProfileMeshFingerprintMissing = "APA047";
+
+        /// <summary>The live mesh content differs from the fingerprint stored in the profile.</summary>
+        /// <remarks>
+        /// This is deliberately separate from <see cref="PartProfileIncompatible"/>: the remedy is to recapture
+        /// the profile after an intentional mesh change, not to search for a different renderer.
+        /// </remarks>
+        public const string ProfileMeshFingerprintMismatch = "APA048";
+
+        /// <summary>A seam vertex carries an effective weight to a bone the target avatar does not declare.</summary>
+        /// <remarks>
+        /// A UV-preserved seam vertex is still animated independently. Allowing it to reference a part-only or
+        /// unbound bone makes the two sides separate when that bone moves, so the part author must use only bones
+        /// present in the target armature at a seam.
+        /// </remarks>
+        public const string SeamWeightBoneNotInTarget = "APA049";
+
         /// <summary>An unexpected exception escaped the assembler. Always accompanied by the exception detail.</summary>
         public const string InternalError = "APA999";
         /// <summary>
@@ -594,6 +617,9 @@ namespace AvatarPartAssembler
                 case BoneOutsideSelectedArmature: return "BONE_OUTSIDE_SELECTED_ARMATURE";
                 case SeamUvPreserved: return "SEAM_UV_PRESERVED";
                 case PartIdDerived: return "PART_ID_DERIVED";
+                case ProfileMeshFingerprintMissing: return "PROFILE_MESH_FINGERPRINT_MISSING";
+                case ProfileMeshFingerprintMismatch: return "PROFILE_MESH_FINGERPRINT_MISMATCH";
+                case SeamWeightBoneNotInTarget: return "SEAM_WEIGHT_BONE_NOT_IN_TARGET";
                 case InternalError: return "INTERNAL_ERROR";
                 default: return string.Empty;
             }
@@ -726,7 +752,7 @@ namespace AvatarPartAssembler
         /// <para>
         /// Kept as its own allocation record for the same reason as <see cref="Milestone10"/>: a later milestone
         /// reads which milestone introduced a code, and a milestone that adds codes never renumbers an existing
-        /// one. <c>APA047</c> through <c>APA049</c> are free; the next free code is <c>APA047</c>.
+        /// one. M12 owns the next three codes; no later milestone may reuse them.
         /// </para>
         /// </remarks>
         public static readonly string[] Milestone11 =
@@ -734,6 +760,26 @@ namespace AvatarPartAssembler
             ApaErrorCode.SeamUvPreserved,
             ApaErrorCode.PartIdDerived
         };
+
+        /// <summary>Codes allocated by M12 for mesh content identity and seam skinning safety.</summary>
+        public static readonly string[] Milestone12 =
+        {
+            ApaErrorCode.ProfileMeshFingerprintMissing,
+            ApaErrorCode.ProfileMeshFingerprintMismatch,
+            ApaErrorCode.SeamWeightBoneNotInTarget
+        };
+
+        /// <summary>Returns true when the code was allocated for the M12 safety work.</summary>
+        public static bool IsMilestone12Code(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return false;
+            for (var i = 0; i < Milestone12.Length; i++)
+            {
+                if (string.Equals(Milestone12[i], code, StringComparison.Ordinal)) return true;
+            }
+
+            return false;
+        }
 
         /// <summary>Returns true when the code was allocated for the M11 seam-preservation/part-id work.</summary>
         public static bool IsMilestone11Code(string code)

@@ -521,6 +521,16 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "No profile is assigned, so this part cannot be installed. Create a profile or assign an " +
                   "existing one.",
                   "未指定配置文件，因此无法安装该部件。请创建配置文件或指定已有配置文件。" },
+                // ---- Installer health indicator (concise end-user verdict) ------------------------------
+                { "This part is ready: validation reported {0}.", "该部件已就绪：验证结果为 {0}。" },
+                { "This part has a problem: validation reported {0}. See the details below.",
+                  "该部件存在问题：验证结果为 {0}。请查看下方的详细信息。" },
+                { "This part has not been validated yet.", "尚未验证该部件。" },
+                { "Validation results were cleared. Press Validate to check this part again.",
+                  "验证结果已清除。再次点击“验证”即可重新检查该部件。" },
+                { "This installer belongs to a prefab asset, so it can only be validated after it is placed " +
+                  "under an avatar in a scene.",
+                  "该安装器属于预制体资产，只有把它放到场景中的角色下之后才能进行验证。" },
                 { "Part", "部件" },
                 { "(unnamed)", "（未命名）" },
                 { "{0} (resolves removal overlaps)", "{0}（用于解析移除区域重叠）" },
@@ -566,6 +576,68 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Creating the profile was blocked: the assembly cannot be planned. {0}. Nothing was written.",
                   "创建配置文件已被阻止：无法规划装配。{0}。未写入任何内容。" },
                 { "Validation", "验证" },
+
+                // ---- Bone fit (installer inspector) -----------------------------------------------------
+                { "Bone Fit", "骨骼适配" },
+                { "Bone fit needs the part placed in a scene under an avatar, so it is offered only for a " +
+                  "scene installer.",
+                  "骨骼适配需要部件已放置到场景中的角色层级下，因此只对场景中的安装器提供。" },
+                { "Bone fit is unavailable in play mode.", "播放模式下无法使用骨骼适配。" },
+                { "The part root could not be resolved, so bone fit is unavailable.",
+                  "无法解析部件根对象，因此无法使用骨骼适配。" },
+                { "This installer is not under an avatar, so there is no avatar pose to fit the part to. Place " +
+                  "the part under an avatar in a scene.",
+                  "该安装器不在任何角色层级下，因此没有可参照的角色姿势。请把部件放到场景中的角色下。" },
+                { "The profile has no Armature selections yet, so the bones cannot be paired. Select both " +
+                  "Armatures in Part Authoring (APA043).",
+                  "配置文件尚未选择骨架，因此无法配对骨骼。请先在部件制作窗口中选择两个骨架（APA043）。" },
+                { "The part armature recorded in the profile could not be resolved under the part root. " +
+                  "Re-select the Part Armature in Part Authoring.",
+                  "配置文件记录的部件骨架无法在部件根对象下解析。请在部件制作窗口中重新选择部件骨架。" },
+                { "The target armature recorded in the profile could not be resolved under the avatar root. " +
+                  "Re-select the Target Armature in Part Authoring.",
+                  "配置文件记录的目标骨架无法在角色根对象下解析。请在部件制作窗口中重新选择目标骨架。" },
+                { "Bone fit is unavailable ({0}).", "骨骼适配不可用（{0}）。" },
+                { "Sync Part Bones To Avatar", "同步部件骨骼到 Avatar" },
+                { "Follow Avatar Bones", "跟随 Avatar 骨骼" },
+                { "Keep this part's bones on the avatar's current pose while the part is placed. Stored on this " +
+                  "installer, so the choice survives closing the Inspector and a domain reload.",
+                  "在放置部件期间，让部件骨骼保持与角色当前姿势一致。该选项保存在此安装器上，" +
+                  "关闭检查器或重新加载域后依然保留。" },
+                { "Include Scale", "包含缩放" },
+                { "Also copy the avatar bones' scale onto the matching part bones. Needed when the avatar's " +
+                  "bones have been rescaled.",
+                  "同时把角色骨骼的缩放复制到对应的部件骨骼。当角色骨骼被重新缩放时需要此项。" },
+                { "No part bone matched a same-named avatar bone, so there is nothing to align. Check the " +
+                  "two Armature selections in Part Authoring.",
+                  "没有部件骨骼匹配到同名的 Avatar 骨骼，因此没有可对齐的内容。请在部件制作窗口中检查两个骨架选择。" },
+                { "Aligned {0} part bone(s) to the avatar's bones.",
+                  "已将 {0} 根部件骨骼对齐到 Avatar 的骨骼。" },
+                { "Aligned {0} part bone(s); {1} had no same-named avatar bone and stayed in place: {2}",
+                  "已对齐 {0} 根部件骨骼；{1} 根没有同名的 Avatar 骨骼，保持原位：{2}" },
+                { "… and {0} more unmatched bone(s)", "… 另有 {0} 根未匹配的骨骼" },
+                { "While following, a moved or scaled avatar bone moves the matching part bones with it every " +
+                  "editor update. The writes are not undoable — turn the toggle off to keep the pose as it is. " +
+                  "The bone pairs are captured when following turns on, so toggle it off and on again after " +
+                  "changing the Armature selections or the part.",
+                  "跟随开启时，Avatar 骨骼的每次移动或缩放都会在编辑器更新时带动对应的部件骨骼。" +
+                  "这些写入无法撤销——关闭开关即可保留当前姿势。骨骼配对在开启跟随时捕获，" +
+                  "因此更改骨架选择或部件后，请先关闭再重新开启跟随。" },
+                { "Modular Avatar's armature lock is active on {0} merge configuration(s) bundled with this " +
+                  "part ({1}). It runs in the edit scene and snaps bones back while you pose them — that is " +
+                  "the pull-back you are seeing, not the merge preview. APA generates its own merge " +
+                  "configuration at build time, so these are not needed here.",
+                  "Modular Avatar 的骨骼锁定正在该部件自带的 {0} 个合并配置上生效（{1}）。" +
+                  "它在编辑场景中运行，会在你摆姿势时把骨骼拉回——你看到的就是它，而不是合并预览。" +
+                  "APA 会在构建时生成自己的合并配置，因此这里不需要它们。" },
+                { "Modular Avatar's armature lock is active on {0} merge configuration(s) elsewhere in the " +
+                  "avatar hierarchy ({1}). Its lock also snaps avatar bones while you pose; if bones still " +
+                  "pull back after this part's own locks are disabled, these are the cause.",
+                  "Modular Avatar 的骨骼锁定正在角色层级中其他 {0} 个合并配置上生效（{1}）。" +
+                  "它们的锁定同样会在摆姿势时吸附 Avatar 骨骼；如果禁用本部件自身的锁定后骨骼仍被拉回，原因就是它们。" },
+                { "Set Lock Mode To Not Locked", "锁定模式改为未锁定" },
+                { "Set {0} merge configuration(s) to Not Locked.", "已将 {0} 个合并配置改为未锁定。" },
+                { "… and {0} more merge configuration(s)", "… 另有 {0} 个合并配置" },
 
                 // ---- Removal mask and seam selection descriptions --------------------------------------
                 { "corrupt storage (mismatched arrays)", "存储损坏（数组长度不匹配）" },
@@ -694,7 +766,10 @@ namespace AvatarPartAssembler.Editor.Localization
 
                 // ---- NDMF pass names -------------------------------------------------------------------
                 { "Create transient merge-armature configuration", "创建临时合并骨架配置" },
-                { "Assemble part geometry into the target body mesh", "将部件几何体装配到目标身体网格" }
+                { "Assemble part geometry into the target body mesh", "将部件几何体装配到目标身体网格" },
+                { "Retarget consumed part animation onto the target renderer",
+                  "将已消费部件的动画重定向到目标渲染器" },
+                { "Remove consumed part objects left empty", "移除已消费且变空的部件对象" }
             };
 
         /// <summary>

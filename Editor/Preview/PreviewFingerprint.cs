@@ -258,7 +258,8 @@ namespace AvatarPartAssembler.Editor.Preview
     /// the node reads and applies on every frame, so they change the picture without changing the mesh; including
     /// them would rebuild the assembly on every weight change. Skinning <i>weights and bind poses</i> are part of
     /// the captured mesh snapshot (<see cref="MeshSnapshot.SkinWeights"/>, <see cref="MeshSnapshot.SkinBindPoses"/>)
-    /// and therefore are included.
+    /// and therefore are included. Live bone world matrices are deliberately excluded: they represent pose, while
+    /// the proxy keeps the same live bone references and must not rebuild a new bind pose for every pose edit.
     /// </para>
     /// <para>
     /// <b>Algorithm id.</b> <see cref="Algorithm"/> is hashed first, so a future change to this vocabulary cannot
@@ -268,7 +269,7 @@ namespace AvatarPartAssembler.Editor.Preview
     public static class ApaPreviewFingerprint
     {
         /// <summary>Identifier of the fingerprint vocabulary; hashed into every value.</summary>
-        public const string Algorithm = "apa-preview-fnv1a64-v1";
+        public const string Algorithm = "apa-preview-fnv1a64-v2";
 
         /// <summary>
         /// Fingerprint used for an input set that could not be captured, and therefore must never be cached or
@@ -366,6 +367,7 @@ namespace AvatarPartAssembler.Editor.Preview
 
             builder.Add(profile.IsCaptured);
             builder.Add(profile.MeshGuid);
+            builder.Add(profile.MeshFingerprint);
             builder.Add(profile.MeshName);
             builder.Add(profile.RendererPath);
             builder.Add(profile.VertexCount);
@@ -386,11 +388,9 @@ namespace AvatarPartAssembler.Editor.Preview
 
             builder.Add("part");
             builder.Add(part.PartId);
-            builder.Add(part.DisplayName);
-            builder.Add((int)part.Slot);
+            builder.Add(part.ProfileMeshFingerprint);
 
             builder.Add("ordering");
-            builder.Add((int)part.OrderingKey.Slot);
             builder.Add(part.OrderingKey.PartId);
             builder.Add(part.OrderingKey.InstallerPath);
 
@@ -517,12 +517,6 @@ namespace AvatarPartAssembler.Editor.Preview
 
             builder.Add("skin-bind-poses");
             for (var i = 0; i < mesh.SkinBindPoses.Count; i++) builder.Add(mesh.SkinBindPoses[i]);
-
-            builder.Add("bone-world-to-local");
-            for (var i = 0; i < mesh.BoneWorldToLocalMatrices.Count; i++)
-            {
-                builder.Add(mesh.BoneWorldToLocalMatrices[i]);
-            }
 
             builder.Add("bone-signature");
             AddBoneSignature(builder, mesh.BoneSignature);

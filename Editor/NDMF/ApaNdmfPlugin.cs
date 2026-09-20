@@ -1,6 +1,7 @@
 using AvatarPartAssembler.Editor.Localization;
 using AvatarPartAssembler.Editor.Preview;
 using nadena.dev.ndmf;
+using nadena.dev.ndmf.animator;
 using nadena.dev.ndmf.fluent;
 
 [assembly: ExportsPlugin(typeof(AvatarPartAssembler.Editor.Ndmf.ApaNdmfPlugin))]
@@ -53,10 +54,22 @@ namespace AvatarPartAssembler.Editor.Ndmf
     /// contract instead — the same discovery predicate, the same target-group planning, and the same
     /// per-group assembly entry point (see <c>ApaPreviewDiscovery</c> and <c>ApaPartConsumptionPlanner</c>).
     /// </description></item>
+    /// <item><description>
+    /// <b>What the assembly consumed is finished after it.</b> Two further Transforming steps run after the
+    /// assembly pass and are declared here with it, because their order is a contract rather than an
+    /// implementation detail. <see cref="ApaAnimatorRetargetPass"/> is declared as a pass that <i>requires</i>
+    /// <see cref="AnimatorServicesContext"/>, so NDMF opens the context for it and the mappings it registers are
+    /// committed by that activation's deactivation; it runs after the assembly, and Modular Avatar has already
+    /// closed the context it used by the time APA's Transforming sequence starts (see the pass's remarks).
+    /// <see cref="ApaEmptySourceCleanupPass"/> is declared in a second sequence that is ordered after Modular
+    /// Avatar's late transform plugin — the stages that purge the remaining Modular Avatar components — and
+    /// explicitly after the retarget pass, because removing a consumed source object before its recorded
+    /// animation paths have moved would leave the mapping with nothing to read.
+    /// </description></item>
     /// </list>
     /// <para>
-    /// Both passes are VRChat-avatar-only by default, which is NDMF's documented default for a plugin without
-    /// <c>RunsOnAllPlatforms</c> (<c>PluginInfo</c> defaults the platform filter to
+    /// All of the passes are VRChat-avatar-only by default, which is NDMF's documented default for a plugin
+    /// without <c>RunsOnAllPlatforms</c> (<c>PluginInfo</c> defaults the platform filter to
     /// <c>WellKnownPlatforms.VRChatAvatar30</c>). The plugin's declared dependency is the VRChat SDK, so that is
     /// the platform it is built for.
     /// </para>
@@ -71,6 +84,14 @@ namespace AvatarPartAssembler.Editor.Ndmf
         /// Modular Avatar's plugin class is internal to <c>nadena.dev.modular-avatar.core.editor</c>.
         /// </summary>
         public const string ModularAvatarPluginQualifiedName = "nadena.dev.modular-avatar";
+
+        /// <summary>
+        /// Qualified name of Modular Avatar's late transform plugin, which purges the remaining Modular Avatar
+        /// components from the avatar. Declared as a string for the same reason as
+        /// <see cref="ModularAvatarPluginQualifiedName"/>: the plugin class is internal to Modular Avatar.
+        /// </summary>
+        public const string ModularAvatarLateTransformPluginQualifiedName =
+            "nadena.dev.modular-avatar.late-transform-stages";
 
         /// <inheritdoc />
         public override string QualifiedName => PluginQualifiedName;
@@ -89,8 +110,13 @@ namespace AvatarPartAssembler.Editor.Ndmf
             InPhase(BuildPhase.Generating)
                 .Run(ApaMergeArmaturePass.Instance);
 
-            InPhase(BuildPhase.Transforming)
-                .AfterPlugin(ModularAvatarPluginQualifiedName)
+            // One sequence, one order: the assembly pass runs first, and the retarget step is declared inside the
+            // same sequence so the mapping it registers can only ever be registered for an assembly that already
+            // happened.
+            var transforming = InPhase(BuildPhase.Transforming)
+                .AfterPlugin(ModularAvatarPluginQualifiedName);
+
+            transforming
                 .Run(ApaAssemblyPass.Instance)
 
                 // Preview registration. NDMF discovers render filters through the pass that owns the work, so
@@ -104,6 +130,32 @@ namespace AvatarPartAssembler.Editor.Ndmf
                 // instance within one session (PreviewSession.AddMutator), and Configure runs again on every
                 // domain reload.
                 .PreviewingWith(ApaPreviewRegistration.CreateFilter());
+
+            // The animator services context is declared as a *required* extension of the retarget step, not as a
+            // compatible one. That is the whole timing contract: Modular Avatar opens the context, processes the
+            // Merge Animator and Merge Armature components, and then closes it inside its own Transforming
+            // sequence (its later passes do not require it), so the context is already closed by the time APA's
+            // Transforming sequence runs — it is ordered after Modular Avatar's plugin end. Requiring it makes
+            // NDMF open it again for this pass, which gives the pass a live ObjectPathRemapper to register the
+            // consumed part renderer → target renderer mappings against, and that activation's own deactivation
+            // commits them to the generated clips through AnimationIndex.RewritePaths. Reopening the context is a
+            // supported NDMF flow: Modular Avatar itself opens it in Resolving and again in Transforming, and the
+            // committed controllers are reused rather than re-created.
+            transforming.WithRequiredExtension(typeof(AnimatorServicesContext), s =>
+            {
+                s.Run(ApaAnimatorRetargetPass.Instance);
+            });
+
+            // The cleanup is a second sequence because it has to wait for Modular Avatar's late transform stages
+            // (AfterPlugin constrains the sequence start), which run after Modular Avatar's own plugin end and
+            // purge the remaining Modular Avatar components. It also waits for the retarget step explicitly:
+            // removing a source object before its recorded animation paths have been moved to the target renderer
+            // would leave the mapping with nothing to read. A sequence constraint cannot express "after one pass
+            // of another sequence", so the order is declared with WaitFor.
+            InPhase(BuildPhase.Transforming)
+                .AfterPlugin(ModularAvatarLateTransformPluginQualifiedName)
+                .WaitFor(ApaAnimatorRetargetPass.Instance)
+                .Run(ApaEmptySourceCleanupPass.Instance);
         }
     }
 }

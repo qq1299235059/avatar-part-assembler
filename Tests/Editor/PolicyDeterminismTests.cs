@@ -280,17 +280,17 @@ namespace AvatarPartAssembler.Tests
             }
         }
 
-        /// <summary>The current schema version is four, and two and three are still readable as no-ops.</summary>
+        /// <summary>The current schema version is five, and two through four are still readable as no-ops.</summary>
         [Test]
         public void SchemaVersion_IsFour_AndOlderVersionsAreStillReadable()
         {
-            Assert.AreEqual(4, ApaPartProfile.CurrentSchemaVersion);
+            Assert.AreEqual(5, ApaPartProfile.CurrentSchemaVersion);
             Assert.AreEqual(2, ApaPartProfile.MinimumMigratableSchemaVersion);
 
             var profile = NewProfile();
             try
             {
-                var versions = new[] { 2, 3, ApaPartProfile.CurrentSchemaVersion };
+                var versions = new[] { 2, 3, 4, ApaPartProfile.CurrentSchemaVersion };
                 for (var i = 0; i < versions.Length; i++)
                 {
                     profile.SchemaVersion = versions[i];
@@ -392,6 +392,8 @@ namespace AvatarPartAssembler.Tests
             allocation.AddRange(ApaReservedCodes.Milestone6);
             allocation.AddRange(ApaReservedCodes.Milestone9Authoring);
             allocation.AddRange(ApaReservedCodes.Milestone10);
+            allocation.AddRange(ApaReservedCodes.Milestone11);
+            allocation.AddRange(ApaReservedCodes.Milestone12);
 
             Assert.IsNotEmpty(allocation, "The allocation record must not be empty.");
 
@@ -450,6 +452,24 @@ namespace AvatarPartAssembler.Tests
             Assert.IsFalse(ApaReservedCodes.IsMilestone10Code(ApaErrorCode.RemovalMaskTextureFailed));
             Assert.IsNotEmpty(ApaErrorCode.GetTitle(ApaErrorCode.ArmatureSelectionInvalid));
             Assert.IsNotEmpty(ApaErrorCode.GetTitle(ApaErrorCode.BoneOutsideSelectedArmature));
+        }
+
+        [Test]
+        public void MilestoneTwelveCodes_AreAllocatedAndTitled()
+        {
+            Assert.AreEqual(3, ApaReservedCodes.Milestone12.Length);
+            Assert.AreEqual(ApaErrorCode.ProfileMeshFingerprintMissing, ApaReservedCodes.Milestone12[0]);
+            Assert.AreEqual(ApaErrorCode.ProfileMeshFingerprintMismatch, ApaReservedCodes.Milestone12[1]);
+            Assert.AreEqual(ApaErrorCode.SeamWeightBoneNotInTarget, ApaReservedCodes.Milestone12[2]);
+
+            for (var i = 0; i < ApaReservedCodes.Milestone12.Length; i++)
+            {
+                var code = ApaReservedCodes.Milestone12[i];
+                Assert.IsTrue(ApaReservedCodes.IsMilestone12Code(code));
+                Assert.IsNotEmpty(ApaErrorCode.GetTitle(code));
+                Assert.Greater(string.CompareOrdinal(code, ApaErrorCode.PartIdDerived), 0);
+                Assert.IsFalse(ApaReservedCodes.IsMilestone11Code(code));
+            }
         }
 
         /// <summary>

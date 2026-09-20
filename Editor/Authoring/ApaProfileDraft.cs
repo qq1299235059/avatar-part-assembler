@@ -38,6 +38,7 @@ namespace AvatarPartAssembler.Editor.Authoring
     {
         [SerializeField] private ApaPartIdentity _identity = new ApaPartIdentity();
         [SerializeField] private ApaAvatarCompatibilityProfile _compatibility = new ApaAvatarCompatibilityProfile();
+        [SerializeField] private string _partMeshFingerprint = string.Empty;
         [SerializeField] private ApaRemovalMask _removal = new ApaRemovalMask();
         [SerializeField] private ApaSeamSelection _seam = new ApaSeamSelection();
         [SerializeField] private ApaUvChannelSemantic[] _uvSemantics = Array.Empty<ApaUvChannelSemantic>();
@@ -45,7 +46,7 @@ namespace AvatarPartAssembler.Editor.Authoring
         [SerializeField] private ApaBoneProfile _bones = new ApaBoneProfile();
         [SerializeField] private ApaBlendShapeProfile _blendShapes = new ApaBlendShapeProfile();
 
-        /// <summary>Stable identity, display name, and declared slot.</summary>
+        /// <summary>The stable part id. Legacy identity metadata is ignored by the authoring surface.</summary>
         public ApaPartIdentity Identity
         {
             get => _identity ?? (_identity = new ApaPartIdentity());
@@ -57,6 +58,13 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             get => _compatibility ?? (_compatibility = new ApaAvatarCompatibilityProfile());
             set => _compatibility = value ?? new ApaAvatarCompatibilityProfile();
+        }
+
+        /// <summary>Fingerprint of the selected part mesh captured for this draft.</summary>
+        public string PartMeshFingerprint
+        {
+            get => _partMeshFingerprint ?? string.Empty;
+            set => _partMeshFingerprint = value ?? string.Empty;
         }
 
         /// <summary>The editable removal triangle set.</summary>
@@ -108,8 +116,6 @@ namespace AvatarPartAssembler.Editor.Authoring
         public static ApaProfileDraft New(string displayName, ApaPartSlot slot)
         {
             var draft = new ApaProfileDraft();
-            draft.Identity.DisplayName = displayName ?? string.Empty;
-            draft.Identity.Slot = slot;
             draft.Identity.EnsureStablePartId();
             return draft;
         }
@@ -168,14 +174,11 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             Identity = new ApaPartIdentity
             {
-                PartId = partId,
-                DisplayName = identity != null ? identity.DisplayName : string.Empty,
-                Slot = identity != null ? identity.Slot : ApaPartSlot.Custom,
-                SlotMode = identity != null ? identity.SlotMode : ApaPartSlotMode.Replace,
-                ConflictPriority = identity != null ? identity.ConflictPriority : 0
+                PartId = partId
             };
 
             Compatibility = CopyCompatibility(profile.CompatibilityOrNull);
+            PartMeshFingerprint = profile.PartMeshFingerprint;
             Removal = ApaRemovalMask.FromRemovalProfile(profile.RemovalOrNull);
             Seam = ApaSeamSelection.FromSeamProfile(profile.SeamOrNull);
             UvSemantics = CopyUv(profile.UvSemantics);
@@ -208,6 +211,7 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             _identity = new ApaPartIdentity();
             _compatibility = new ApaAvatarCompatibilityProfile();
+            _partMeshFingerprint = string.Empty;
             _removal = new ApaRemovalMask();
             _seam = new ApaSeamSelection();
             _uvSemantics = Array.Empty<ApaUvChannelSemantic>();
@@ -258,13 +262,10 @@ namespace AvatarPartAssembler.Editor.Authoring
             profile.SchemaVersion = ApaPartProfile.CurrentSchemaVersion;
             profile.Identity = new ApaPartIdentity
             {
-                PartId = Identity.PartId,
-                DisplayName = Identity.DisplayName,
-                Slot = Identity.Slot,
-                SlotMode = Identity.SlotMode,
-                ConflictPriority = Identity.ConflictPriority
+                PartId = Identity.PartId
             };
             profile.Compatibility = CopyCompatibility(Compatibility);
+            profile.PartMeshFingerprint = PartMeshFingerprint;
             profile.Removal = Removal.ToRemovalProfile();
             profile.Seam = Seam.ToSeamProfile();
             profile.UvSemantics = CopyUv(UvSemantics);
@@ -501,6 +502,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                 MeshName = source.MeshName,
                 RendererPath = source.RendererPath,
                 MeshGuid = source.MeshGuid,
+                MeshFingerprint = source.MeshFingerprint,
                 VertexCount = source.VertexCount,
                 SubMeshIndexCounts = Copy(source.SubMeshIndexCounts),
                 SubMeshTopologyValues = Copy(source.SubMeshTopologyValues),
