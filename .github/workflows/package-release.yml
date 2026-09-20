@@ -1,0 +1,93 @@
+name: Package VPM Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - Editor/**
+      - Runtime/**
+      - Tests/**
+      - Documentation~/**
+      - '*.md'
+      - .github/workflows/package-release.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: package-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read package manifest
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package.json
+          name="$(jq -r '.name' package.json)"
+          version="$(jq -r '.version' package.json)"
+          if [ -z "${name}" ] || [ "${name}" = "null" ]; then
+            echo "package.json is missing a name" >&2
+            exit 1
+          fi
+          if [ -z "${version}" ] || [ "${version}" = "null" ]; then
+            echo "package.json is missing a version" >&2
+            exit 1
+          fi
+          echo "name=${name}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "zip_file=${name}-${version}.zip" >> "${GITHUB_OUTPUT}"
+          echo "unity_file=${name}-${version}.unitypackage" >> "${GITHUB_OUTPUT}"
+
+      - name: Stage tracked package files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist/package
+          git archive HEAD | tar -x -C dist/package
+          rm -rf dist/package/.github
+          echo "dist/package/${{ steps.manifest.outputs.name }}-${{ steps.manifest.outputs.version }}.zip" > zip_path
+          echo "dist/package/${{ steps.manifest.outputs.name }}-${{ steps.manifest.outputs.version }}.unitypackage" > unity_path
+
+      - name: Create VPM package zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist/package
+          zip -qr "../${{ steps.manifest.outputs.zip_file }}" .
+          mv "../${{ steps.manifest.outputs.zip_file }}" "../${{ steps.manifest.outputs.zip_file }}"
+
+      - name: Track Unity asset metadata
+        shell: bash
+        run: find dist/package -type f -name '*.meta' -print > metaList
+
+      - name: Create Unity package archive
+        uses: pCYSl5EDgo/create-unitypackage@v1.2.3
+        with:
+          package-path: dist/${{ steps.manifest.outputs.unity_file }}
+          include-files: metaList
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844
+        with:
+          tag_name: v${{ steps.manifest.outputs.version }}
+          name: ${{ steps.manifest.outputs.name }} ${{ steps.manifest.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ contains(steps.manifest.outputs.version, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ steps.manifest.outputs.zip_file }}
+            dist/${{ steps.manifest.outputs.unity_file }}
+            dist/package/package.json
