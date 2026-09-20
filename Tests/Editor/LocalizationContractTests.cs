@@ -612,7 +612,7 @@ namespace AvatarPartAssembler.Tests
                 ApaErrorCode.RemovalOverlapResolvedByPriority, ApaErrorCode.UndeclaredUvChannel,
                 ApaErrorCode.InvalidConflictPriority, ApaErrorCode.SubMeshWithoutMaterialSlot,
                 ApaErrorCode.InactiveInstallerSkipped, ApaErrorCode.PartOnlyShapeDisallowed,
-                ApaErrorCode.UvSemanticChannelAbsent, ApaErrorCode.InternalError
+                ApaErrorCode.UvSemanticChannelAbsent, ApaErrorCode.MergeVertexGroupInvalid, ApaErrorCode.InternalError
             };
 
             var missing = new List<string>();

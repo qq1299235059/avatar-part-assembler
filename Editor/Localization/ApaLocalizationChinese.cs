@@ -316,10 +316,11 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Clear Seam", "清空接缝" },
                 { "Cleared the seam. This part now declares no seam.", "已清空接缝。该部件现在不声明任何接缝。" },
                 { "Both meshes are read in their rest pose (the shared mesh, never a baked pose) and every " +
-                  "world-coincident pair within the tolerance is written as one weld. Leave the seam empty " +
-                  "when this part does not weld to the body.",
-                  "两个网格都按静置姿势读取（使用共享网格，绝不使用烘焙姿势），容差内所有世界坐标重合的顶点都会写成一对焊接。" +
-                  "如果该部件不与身体焊接，请保持接缝为空。" },
+                  "world-coincident pair within the tolerance is written as one weld — but only vertices of " +
+                  "the named 'merge vertex' group may pair. Leave the seam empty when this part does not " +
+                  "weld to the body.",
+                  "两个网格都按静置姿势读取（使用共享网格，绝不使用烘焙姿势），容差内所有世界坐标重合的顶点都会写成一对焊接——" +
+                  "但只有名为 'merge vertex' 的顶点组内的顶点才允许配对。如果该部件不与身体焊接，请保持接缝为空。" },
                 { "This seam was authored before explicit pairing: its two lists are unordered sets and the " +
                   "build refuses them (APA042). Generate it from world positions to write the pairing.",
                   "该接缝是在显式配对之前制作的：它的两个列表是无序集合，构建会拒绝它（APA042）。" +
@@ -333,6 +334,22 @@ namespace AvatarPartAssembler.Editor.Localization
                   "counterpart.",
                   "在世界容差 {1} 内生成 {0} 对接缝；{3} 个部件顶点中有 {2} 个找到了未占用的对应顶点。" },
                 { "Seam problems", "接缝问题" },
+                { "Target merge vertex group: {0}", "目标 'merge vertex' 顶点组：{0}" },
+                { "Part merge vertex group: {0}", "部件 'merge vertex' 顶点组：{0}" },
+                { "not resolved", "未解析" },
+                { "no merge vertex group", "没有 'merge vertex' 顶点组" },
+                { "{0} merge-vertex candidate(s) from the ApaMergeVertexGroup component",
+                  "来自 ApaMergeVertexGroup 组件的 {0} 个接缝候选顶点" },
+                { "{0} merge-vertex candidate(s) from the '{1}' bone",
+                  "来自 '{1}' 骨骼的 {0} 个接缝候选顶点" },
+                { "preview: current blend-shape pose; seam data stays rest-pose",
+                  "预览：当前形态键姿势；接缝数据仍为静置姿势" },
+                { "\npreview: current blend-shape pose; seam data stays rest-pose",
+                  "\n预览：当前形态键姿势；接缝数据仍为静置姿势" },
+                { "(missing)", "（缺失）" },
+                { "Mesh Fingerprint", "网格指纹" },
+                { "mesh fingerprint", "网格指纹" },
+                { "Capture Part Mesh Fingerprint", "捕获部件网格指纹" },
                 { "… and {0} more (the numeric address field and the mask modes edit the whole set)",
                   "… 另有 {0} 项（数字地址输入框与遮罩模式可编辑整个集合）" },
                 { "Remove", "移除" },
@@ -831,6 +848,8 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "APA045", "同名 UV 语义在接缝配对上不一致，已保留部件接缝顶点（拆分顶点）" },
                 { "APA046", "配置文件没有保存部件 ID，已从配置文件资产 GUID 派生稳定 ID" },
                 { "APA050", "UV 语义声明的通道在部件网格上不存在" },
+                { "APA051", "无法把渲染器上名为 'merge vertex' 的顶点组解析为候选顶点：没有声明该组、组内为空、" +
+                            "权重全为零、同名骨骼不唯一，或列出的索引无法用于该网格" },
                 { "APA999", "装配器内部发生了未预期的异常" }
             };
     }

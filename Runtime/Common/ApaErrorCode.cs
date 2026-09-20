@@ -27,6 +27,8 @@ namespace AvatarPartAssembler
     /// (<c>SEAM_UV_PRESERVED</c>) and APA046 (<c>PART_ID_DERIVED</c>), see
     /// <see cref="ApaReservedCodes.Milestone11"/>.
     /// M12 allocates APA047 through APA049 for mesh-content fingerprints and seam skinning safety.
+    /// M13 allocates APA051 (<c>MERGE_VERTEX_GROUP_INVALID</c>) for the named <c>merge vertex</c> group the
+    /// automatic seam generator reads; see <see cref="ApaReservedCodes.Milestone13"/>.
     /// </para>
     /// </remarks>
     public static class ApaErrorCode
@@ -560,6 +562,32 @@ namespace AvatarPartAssembler
         /// </remarks>
         public const string SeamWeightBoneNotInTarget = "APA049";
 
+        /// <summary>
+        /// The named <c>merge vertex</c> group of a renderer cannot be resolved into candidate vertices.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Emitted by the authoring layer only, by the automatic world-position seam generator, because the group
+        /// is an authoring <i>input</i>: the build consumes the explicit seam pairs the generator writes, never
+        /// the group. The condition is the whole contract of "which vertices may pair": the renderer declares no
+        /// group at all, declares it in a representation that carries no data (an empty component list, or a bone
+        /// that weights no vertex positively), declares it ambiguously (two bones share the name), or declares
+        /// indices the mesh cannot address (out of range, repeated, or recorded against a mesh of a different
+        /// size). Every one of them has the same remedy — fix the group on the source or in the component — and
+        /// the same alternative the contract forbids, which is silently pairing every vertex instead.
+        /// </para>
+        /// <para>
+        /// The failing condition is carried by a stable <c>reason=…</c> token in the detail
+        /// (<c>merge-vertex-group-missing</c>, <c>merge-vertex-group-not-skinned</c>,
+        /// <c>merge-vertex-group-empty</c>, <c>merge-vertex-group-no-weighted-vertices</c>,
+        /// <c>merge-vertex-group-ambiguous-bone</c>, <c>merge-vertex-group-index-out-of-range</c>,
+        /// <c>merge-vertex-group-duplicate-index</c>, <c>merge-vertex-group-vertex-count-mismatch</c>, and
+        /// <c>merge-vertex-group-weight-count-mismatch</c>), so a report, a test, and a log stay comparable
+        /// without a code per condition. Allocated by M13 above the M12 range.
+        /// </para>
+        /// </remarks>
+        public const string MergeVertexGroupInvalid = "APA051";
+
         /// <summary>An unexpected exception escaped the assembler. Always accompanied by the exception detail.</summary>
         public const string InternalError = "APA999";
         /// <summary>
@@ -620,6 +648,7 @@ namespace AvatarPartAssembler
                 case ProfileMeshFingerprintMissing: return "PROFILE_MESH_FINGERPRINT_MISSING";
                 case ProfileMeshFingerprintMismatch: return "PROFILE_MESH_FINGERPRINT_MISMATCH";
                 case SeamWeightBoneNotInTarget: return "SEAM_WEIGHT_BONE_NOT_IN_TARGET";
+                case MergeVertexGroupInvalid: return "MERGE_VERTEX_GROUP_INVALID";
                 case InternalError: return "INTERNAL_ERROR";
                 default: return string.Empty;
             }
@@ -769,6 +798,21 @@ namespace AvatarPartAssembler
             ApaErrorCode.SeamWeightBoneNotInTarget
         };
 
+        /// <summary>
+        /// Codes allocated by M13: the named <c>merge vertex</c> group the automatic seam generator reads.
+        /// </summary>
+        /// <remarks>
+        /// Kept as its own allocation record for the same reason as the earlier arrays: a later milestone reads
+        /// which milestone introduced a code, and a milestone that adds codes never renumbers an existing one.
+        /// <c>APA051</c> is an authoring-layer code — the build never sees a vertex group — so it is emitted only
+        /// by <c>ApaMergeVertexGroupResolver</c>, and the failing condition is carried by a <c>reason=…</c> token
+        /// rather than by a code per condition.
+        /// </remarks>
+        public static readonly string[] Milestone13 =
+        {
+            ApaErrorCode.MergeVertexGroupInvalid
+        };
+
         /// <summary>Returns true when the code was allocated for the M12 safety work.</summary>
         public static bool IsMilestone12Code(string code)
         {
@@ -776,6 +820,18 @@ namespace AvatarPartAssembler
             for (var i = 0; i < Milestone12.Length; i++)
             {
                 if (string.Equals(Milestone12[i], code, StringComparison.Ordinal)) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Returns true when the code was allocated for the M13 named merge-vertex group work.</summary>
+        public static bool IsMilestone13Code(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return false;
+            for (var i = 0; i < Milestone13.Length; i++)
+            {
+                if (string.Equals(Milestone13[i], code, StringComparison.Ordinal)) return true;
             }
 
             return false;

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0-rc.9] — named merge-vertex seam candidates and blend-shape-safe authoring preview
+
+### Added
+
+- Automatic world-position seam generation now accepts candidates only from the exact `merge vertex` group on
+  both renderers. Unity imports that preserve the group as a skinned bone can use a bone named exactly `merge
+  vertex` with positive per-vertex weights; non-skinned or explicit imported index data can use the
+  `ApaMergeVertexGroup` component on the renderer's GameObject. Missing, empty, ambiguous, stale, duplicated or
+  out-of-range data blocks generation with `APA051 MERGE_VERTEX_GROUP_INVALID` instead of falling back to every
+  vertex.
+- The authoring Scene View removal overlay, hover picking and click picking now follow the target renderer's
+  evaluated blend-shape geometry through a cached `BakeMesh` result. Triangle addresses and all build/seam data
+  remain rest-pose data, so the preview moves visually without changing what will be assembled.
+
+### Documentation and tests
+
+- Added focused resolver and preview-cache editor tests, the `merge vertex` authoring contract, and the explicit
+  note that Unity has no generic named vertex-group API.
+
 All notable changes to Avatar Part Assembler are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 semantic versioning.

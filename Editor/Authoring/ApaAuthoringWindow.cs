@@ -135,6 +135,15 @@ namespace AvatarPartAssembler.Editor.Authoring
         [NonSerialized] private ValidationResult _removalCheck;
         [NonSerialized] private ValidationResult _seamCheck;
         [NonSerialized] private bool _liveChecksDirty = true;
+
+        // The resolved 'merge vertex' group of each side. Cached per change because resolving the bone path reads
+        // Mesh.boneWeights, which allocates a full copy of the mesh's skin data: doing that on every repaint of
+        // the seam block would allocate megabytes per frame on a real body mesh. The cache is refreshed whenever
+        // the live checks are invalidated (selection change, undo, an input event) and re-resolved unconditionally
+        // by the generate action, which is the one place the group is authoritative input.
+        [NonSerialized] private ApaMergeVertexGroupResult _targetMergeGroup;
+        [NonSerialized] private ApaMergeVertexGroupResult _partMergeGroup;
+        [NonSerialized] private bool _mergeGroupsResolved;
         [NonSerialized] private string _existingProfileState;
         [NonSerialized] private bool _signatureSafetyStale;
         [NonSerialized] private bool _signatureIdentityStale;
@@ -301,6 +310,11 @@ namespace AvatarPartAssembler.Editor.Authoring
             SceneView.duringSceneGui -= OnSceneGui;
             Undo.undoRedoPerformed -= OnUndoRedo;
             Changed -= OnLanguageChanged;
+
+            // The Scene View tool owns a transient destination mesh for the evaluated-geometry bake. Dropping the
+            // reference without disposing it would leave that native mesh behind on every close/reopen, so the
+            // tool is torn down here rather than merely forgotten.
+            _sceneTool?.Dispose();
             _sceneTool = null;
         }
 
@@ -1113,6 +1127,18 @@ namespace AvatarPartAssembler.Editor.Authoring
                 ApaSeamWorldMatcher.MinimumTolerance,
                 ApaSeamWorldMatcher.MaximumTolerance);
 
+            // The group is what makes "which vertices may pair" an inspectable answer, so the window states both
+            // sides before the action runs: how many candidates there are, which representation supplied them,
+            // and — when a side has no usable group — the blocking diagnostic, in the same words the action will
+            // report. It never says "all vertices", because that state no longer exists.
+            EnsureMergeVertexGroups();
+            EditorGUILayout.LabelField(
+                TrFormat("Target merge vertex group: {0}", DescribeMergeGroup(_targetMergeGroup)),
+                EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(
+                TrFormat("Part merge vertex group: {0}", DescribeMergeGroup(_partMergeGroup)),
+                EditorStyles.miniLabel);
+
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(Tr("Generate From World Positions"), GUILayout.Width(220)))
             {
@@ -1133,8 +1159,9 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             EditorGUILayout.LabelField(
                 Tr("Both meshes are read in their rest pose (the shared mesh, never a baked pose) and every " +
-                   "world-coincident pair within the tolerance is written as one weld. Leave the seam empty " +
-                   "when this part does not weld to the body."),
+                   "world-coincident pair within the tolerance is written as one weld — but only vertices of " +
+                   "the named 'merge vertex' group may pair. Leave the seam empty when this part does not " +
+                   "weld to the body."),
                 EditorStyles.miniLabel);
 
             if (!seam.IsEmpty && !seam.IsPaired)
@@ -1166,26 +1193,52 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// Runs the world-position matcher and writes the resulting pairs as one undoable edit.
         /// </summary>
         /// <remarks>
+        /// <para>
+        /// <b>Only the named group may pair.</b> Both candidate lists are resolved from the <c>merge vertex</c>
+        /// group contract (<see cref="ApaMergeVertexGroupResolver"/>) and handed to the matcher's candidate
+        /// overload, so a vertex outside the group is never paired no matter how well it coincides. A side whose
+        /// group is missing, empty, ambiguous, or malformed is refused with <c>APA051</c> before the matcher runs;
+        /// there is deliberately no path from "no group" to "every vertex", because that fallback is the defect
+        /// this contract exists to remove.
+        /// </para>
+        /// <para>
         /// A refusal leaves the existing selection untouched: the action reports its diagnostic in the seam
         /// block and the profile keeps whatever it had, so a failed attempt can never damage authored data.
+        /// </para>
         /// </remarks>
         private void GenerateWorldSeam(ApaSeamSelection seam)
         {
+            // Re-resolved here rather than read from the display cache: the group is the authoritative input of
+            // this action, and a component edited in the Inspector changes it without any repaint-time signal.
+            RefreshMergeVertexGroups();
+
+            var targetGroup = _targetMergeGroup;
+            var partGroup = _partMergeGroup;
+
+            if (!targetGroup.Succeeded)
+            {
+                FailSeamGeneration(targetGroup.Issue);
+                return;
+            }
+
+            if (!partGroup.Succeeded)
+            {
+                FailSeamGeneration(partGroup.Issue);
+                return;
+            }
+
             var result = ApaSeamWorldMatcher.Match(
                 _selection.TargetRenderer,
                 _selection.TargetMesh,
                 _selection.PartRenderer,
                 _selection.PartMesh,
-                _seamTolerance);
+                _seamTolerance,
+                targetGroup.Indices,
+                partGroup.Indices);
 
             if (!result.Succeeded)
             {
-                _lastWriteIssues = ValidationResult.Single(result.Issue);
-                _seamResultText = TrFormat("Seam generation failed: {0}", ApaDiagnosticText.Format(result.Issue));
-                _seamResultType = MessageType.Error;
-                SetStatus(Tr("Seam generation produced no pairs. The refusal is shown in the Seam block."));
-                MarkSelectionDirty();
-                Repaint();
+                FailSeamGeneration(result.Issue);
                 return;
             }
 
@@ -1200,6 +1253,53 @@ namespace AvatarPartAssembler.Editor.Authoring
             MarkSelectionDirty();
             Repaint();
             SceneView.RepaintAll();
+        }
+
+        /// <summary>
+        /// Reports a refused seam generation without touching the authored seam.
+        /// </summary>
+        /// <remarks>
+        /// The diagnostic is kept as the last write result as well as shown in the seam block, so a failure is
+        /// still visible in the diagnostics section after the block scrolls out of view — and it keeps the stable
+        /// code and <c>reason=</c> token that the contract is asserted on.
+        /// </remarks>
+        private void FailSeamGeneration(ValidationIssue issue)
+        {
+            _lastWriteIssues = issue == null ? ValidationResult.Empty : ValidationResult.Single(issue);
+            _seamResultText = TrFormat("Seam generation failed: {0}", ApaDiagnosticText.Format(issue));
+            _seamResultType = MessageType.Error;
+            SetStatus(Tr("Seam generation produced no pairs. The refusal is shown in the Seam block."));
+            MarkSelectionDirty();
+            Repaint();
+        }
+
+        /// <summary>Re-resolves both sides' <c>merge vertex</c> groups.</summary>
+        private void RefreshMergeVertexGroups()
+        {
+            _targetMergeGroup = ApaMergeVertexGroupResolver.Resolve(
+                _selection.TargetRenderer, _selection.TargetMesh, ApaMergeVertexGroupResolver.TargetSide);
+            _partMergeGroup = ApaMergeVertexGroupResolver.Resolve(
+                _selection.PartRenderer, _selection.PartMesh, ApaMergeVertexGroupResolver.PartSide);
+            _mergeGroupsResolved = true;
+        }
+
+        /// <summary>
+        /// Resolves both groups at most once per change, for the seam block's two status lines.
+        /// </summary>
+        private void EnsureMergeVertexGroups()
+        {
+            if (_mergeGroupsResolved && !_liveChecksDirty) return;
+            RefreshMergeVertexGroups();
+        }
+
+        /// <summary>
+        /// One line describing a resolved group: its candidate count and source, or the blocking diagnostic that
+        /// stops the generator. Never a fallback description, because there is no fallback.
+        /// </summary>
+        private static string DescribeMergeGroup(ApaMergeVertexGroupResult group)
+        {
+            if (group == null) return Tr("not resolved");
+            return group.Succeeded ? group.Describe() : ApaDiagnosticText.FormatShort(group.Issue);
         }
 
         private void DrawUvSection()

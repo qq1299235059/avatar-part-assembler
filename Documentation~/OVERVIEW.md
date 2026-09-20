@@ -22,7 +22,7 @@ authoring asset.
 
 ## Release-candidate status
 
-**This is release candidate `0.3.0-rc.6` (`0.3.0-rc.6` in `package.json`). It is not a
+**This is release candidate `0.3.0-rc.9` (`0.3.0-rc.9` in `package.json`). It is not a
 1.0 release and the full acceptance checklist is still incomplete.**
 
 The core build path has now been exercised in Unity 2022.3.22f1 rather than only reviewed
@@ -114,7 +114,7 @@ whether the Test Runner can see and run it.
 
 ## Play Mode and Gesture Manager
 
-`0.3.0-rc.6` enables Play Mode compatibility by default. When a loaded scene contains an
+`0.3.0-rc.9` enables Play Mode compatibility by default. When a loaded scene contains an
 `AvatarPartInstaller`, APA temporarily enables NDMF's official **Apply On Play** setting before
 entering Play Mode.
 
@@ -538,6 +538,14 @@ Picking the base and part seam vertices by hand, the two index-list text fields,
 two Scene View picking modes are gone: they asked the author to maintain one
 correspondence across two spaces, which is exactly the correspondence the tool computes in
 one action.
+
+Automatic generation is restricted to the exact named `merge vertex` group on both renderers. Unity's `Mesh` API
+does not preserve arbitrary vertex-group names: an imported skinned group can be represented by a bone named exactly
+`merge vertex` with positive per-vertex weights, while non-skinned/import-tool data uses the `ApaMergeVertexGroup`
+component on the renderer object. Missing, empty, ambiguous, stale, duplicate or out-of-range group data blocks with
+`APA051 MERGE_VERTEX_GROUP_INVALID`; there is no all-vertex fallback. The authoring red removal overlay and its
+hover/click picking use a cached `SkinnedMeshRenderer.BakeMesh` result while blend-shape weights are active, but the
+triangle addresses, seam pairs and build remain rest-pose data.
 
 Equality is never used for floats: the generator compares squared world distances against
 the tolerance, and the position and UV epsilons used elsewhere keep their `1e-5` defaults,
@@ -1060,7 +1068,7 @@ Two version numbers, never conflated:
 | Version | Meaning | Current value |
 | --- | --- | --- |
 | `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **5** (`ApaPartProfile.CurrentSchemaVersion`) |
-| Package version in `package.json` | The shipped build | **0.3.0-rc.6** |
+| Package version in `package.json` | The shipped build | **0.3.0-rc.9** |
 
 Migration policy:
 
@@ -1370,7 +1378,7 @@ observation of them (checklist 6.7) is still open.
 
 ### Release-candidate versioning
 
-`0.3.0-rc.6` is a **prerelease**. Per semver it sorts before `0.3.0`, so no VPM
+`0.3.0-rc.9` is a **prerelease**. Per semver it sorts before `0.3.0`, so no VPM
 resolution will treat it as the stable `0.3.0`. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
 no document, changelog entry, or commit message in this package may describe the

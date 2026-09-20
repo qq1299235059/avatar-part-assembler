@@ -42,6 +42,13 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// validates the <c>RemovedTriangleAddress</c> set the conversion produces — which is why they are
     /// authoring-layer codes rather than assembly codes.
     /// </description></item>
+    /// <item><description>
+    /// <b>APA051</b> — the named <c>merge vertex</c> group of a renderer cannot be resolved into candidate
+    /// vertices: no group is declared, the <c>ApaMergeVertexGroup</c> component lists no index, the group's bone
+    /// weights no vertex positively, two bones share the name, or the listed indices cannot address the mesh.
+    /// The group is an authoring input too — the build consumes the seam pairs the generator writes — and every
+    /// one of those conditions has the same forbidden alternative, which is pairing every vertex instead.
+    /// </description></item>
     /// </list>
     /// <para>
     /// All of them are authored-data defects, not "unsupported mesh attribute" defects, which is why they are not
@@ -74,6 +81,12 @@ namespace AvatarPartAssembler.Editor.Authoring
         public const string RemovalMaskTextureFailed = ApaErrorCode.RemovalMaskTextureFailed;
 
         /// <summary>
+        /// The named <c>merge vertex</c> group of a renderer cannot be resolved into candidate vertices. Alias
+        /// of <see cref="ApaErrorCode.MergeVertexGroupInvalid"/>.
+        /// </summary>
+        public const string MergeVertexGroupInvalid = ApaErrorCode.MergeVertexGroupInvalid;
+
+        /// <summary>
         /// Returns the stable title of a code. Delegates to <see cref="ApaErrorCode.GetTitle"/>, which knows every
         /// code this package allocates; a code from a newer build returns an empty string rather than throwing.
         /// </summary>
@@ -86,7 +99,8 @@ namespace AvatarPartAssembler.Editor.Authoring
         public static bool IsAuthoringCode(string code)
         {
             return ApaReservedCodes.IsMilestone5AuthoringCode(code)
-                   || ApaReservedCodes.IsMilestone9AuthoringCode(code);
+                   || ApaReservedCodes.IsMilestone9AuthoringCode(code)
+                   || ApaReservedCodes.IsMilestone13Code(code);
         }
     }
 

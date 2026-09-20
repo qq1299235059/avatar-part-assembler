@@ -452,15 +452,15 @@ namespace AvatarPartAssembler.Tests
         }
 
         [Test]
-        public void PackageMovesToRc8WithAChangelogEntry()
+        public void PackageMovesToRc9WithAChangelogEntry()
         {
             StringAssert.Contains(
-                "\"version\": \"0.3.0-rc.8\"",
+                "\"version\": \"0.3.0-rc.9\"",
                 ReadSource("package.json"),
-                "The package prerelease version must be 0.3.0-rc.8.");
+                "The package prerelease version must be 0.3.0-rc.9.");
 
             var changelog = ReadSource("CHANGELOG.md");
-            StringAssert.Contains("## [0.3.0-rc.8]", changelog, "The changelog must record the new version.");
+            StringAssert.Contains("## [0.3.0-rc.9]", changelog, "The changelog must record the new version.");
             StringAssert.Contains("PrefabUnpackMode.OutermostRoot", changelog,
                 "The changelog must record the unpack mode.");
             StringAssert.Contains("independent prefab", changelog,

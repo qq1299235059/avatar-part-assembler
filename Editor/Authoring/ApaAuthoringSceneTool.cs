@@ -88,6 +88,14 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// conservative budgets; a click is one-shot and keeps the larger budget, because that is where correctness
     /// matters.
     /// </para>
+    /// <para>
+    /// <b>The removal overlay follows the drawn geometry.</b> When the target renderer deforms through blend
+    /// shapes, the red triangles and the hover/click picks read the renderer's current evaluated geometry
+    /// (<see cref="ApaPreviewPositionCache"/>: a cached <c>BakeMesh</c> result) instead of the mesh's rest-pose
+    /// vertices, so a highlight cannot sit beside the surface it describes. Nothing about the assembled mesh
+    /// changes: the removal <i>set</i> is still a set of triangle addresses, and seam generation and every
+    /// build-time decision still read the rest pose.
+    /// </para>
     /// </remarks>
     public sealed class ApaAuthoringSceneTool
     {
@@ -123,12 +131,29 @@ namespace AvatarPartAssembler.Editor.Authoring
         private readonly ApaMeshArrayCache _targetArrays = new ApaMeshArrayCache();
         private readonly ApaMeshArrayCache _partArrays = new ApaMeshArrayCache();
 
+        // The positions the overlay and the picks use. Each delegates its rest-pose half to the array cache of
+        // its own role, so one mesh still has one vertex array; the evaluated half is a cached BakeMesh result
+        // that only exists while the renderer actually deforms through blend shapes.
+        private readonly ApaPreviewPositionCache _targetPreview;
+        private readonly ApaPreviewPositionCache _partPreview;
+
+        // One baker for both roles: BakeMesh overwrites its destination mesh, so a second one would only double
+        // the transient native mesh the tool has to dispose. The caches are handed this instance and therefore do
+        // not own it; Dispose below releases it, which is what keeps closing the window from leaking it.
+        private readonly ApaSkinnedMeshBaker _baker = new ApaSkinnedMeshBaker();
+
         private RemovedTriangleAddress _hoveredTriangle = RemovedTriangleAddress.None;
+
+        /// <summary>True when this repaint drew the target overlay from evaluated geometry, for the label.</summary>
+        private bool _targetPreviewIsEvaluated;
 
         /// <summary>Creates a tool bound to a host.</summary>
         public ApaAuthoringSceneTool(IApaAuthoringSceneHost host)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
+
+            _targetPreview = new ApaPreviewPositionCache(_baker, _targetArrays);
+            _partPreview = new ApaPreviewPositionCache(_baker, _partArrays);
         }
 
         /// <summary>
@@ -139,12 +164,28 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             _targetArrays.Invalidate();
             _partArrays.Invalidate();
+            _targetPreview.Invalidate();
+            _partPreview.Invalidate();
         }
 
-        /// <summary>The cache that owns a mesh's arrays: the part mesh has its own, every other mesh shares one.</summary>
-        private ApaMeshArrayCache CacheFor(bool isPartMesh)
+        /// <summary>
+        /// Releases the transient mesh the evaluated-geometry baker owns. Called when the window closes.
+        /// </summary>
+        /// <remarks>
+        /// Idempotent: a window can be disabled more than once (reload, close, domain reload), and the baker's
+        /// <c>Dispose</c> is a no-op once the mesh is gone.
+        /// </remarks>
+        public void Dispose()
         {
-            return isPartMesh ? _partArrays : _targetArrays;
+            _targetPreview.Dispose();
+            _partPreview.Dispose();
+            _baker.Dispose();
+        }
+
+        /// <summary>The preview cache that owns a renderer role: the part mesh has its own, every other mesh shares one.</summary>
+        private ApaPreviewPositionCache PreviewFor(bool isPartMesh)
+        {
+            return isPartMesh ? _partPreview : _targetPreview;
         }
 
         /// <summary>
@@ -219,8 +260,12 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (_host.ToolMode != ApaSceneToolMode.RemovalTriangles) return;
 
             var mesh = selection != null ? selection.TargetMesh : null;
-            if (mesh == null || !_targetArrays.TryRead(mesh, out var vertices, out var triangleIndices)) return;
+            if (mesh == null || !_targetArrays.TryRead(mesh, out _, out var triangleIndices)) return;
             if (ApaMeshArrayCache.CountTriangles(triangleIndices) > ApaScenePicking.HoverTriangleBudget) return;
+
+            // The pick tests the same positions the overlay draws, so a hover highlight lands on the triangle the
+            // author sees under the cursor even while a blend shape deforms the body.
+            if (!_targetPreview.TryRead(selection.TargetRenderer, mesh, out var vertices, out _)) return;
 
             var ray = HandleUtility.GUIPointToWorldRay(mousePosition);
             if (ApaScenePicking.TryPickTriangle(
@@ -242,8 +287,10 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             var mesh = selection.TargetMesh;
             if (mesh == null) return false;
-            if (!_targetArrays.TryRead(mesh, out var vertices, out var triangleIndices)) return false;
+            if (!_targetArrays.TryRead(mesh, out _, out var triangleIndices)) return false;
             if (ApaMeshArrayCache.CountTriangles(triangleIndices) > ApaScenePicking.ClickTriangleBudget) return false;
+
+            if (!_targetPreview.TryRead(selection.TargetRenderer, mesh, out var vertices, out _)) return false;
 
             var ray = HandleUtility.GUIPointToWorldRay(currentEvent.mousePosition);
             if (!ApaScenePicking.TryPickTriangle(
@@ -281,6 +328,8 @@ namespace AvatarPartAssembler.Editor.Authoring
             var previousColor = Handles.color;
             try
             {
+                _targetPreviewIsEvaluated = false;
+
                 DrawBodyContext(selection);
                 DrawRemoval(host, selection);
                 DrawSeams(host, selection);
@@ -322,7 +371,12 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             if (mask == null || mask.IsEmpty || renderer == null || mesh == null || !mesh.isReadable) return;
 
-            if (!_targetArrays.TryRead(mesh, out var vertices, out var triangleIndices)) return;
+            if (!_targetArrays.TryRead(mesh, out _, out var triangleIndices)) return;
+
+            // The triangle addresses come from the mesh (topology never changes with a pose), the positions from
+            // the evaluated geometry when the renderer deforms: the removal set is a set of addresses either way.
+            if (!_targetPreview.TryRead(renderer, mesh, out var vertices, out var source)) return;
+            _targetPreviewIsEvaluated = source == ApaPreviewPositionSource.Evaluated;
 
             var localToWorld = renderer.transform.localToWorldMatrix;
             var drawn = 0;
@@ -354,10 +408,17 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// Draws the generated seam pairs, read-only.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// Yellow discs are the retained base vertices, cyan discs the part vertices they weld onto. The two
         /// lists are drawn side by side rather than one per list position, because the pairing is what the author
         /// generated and is what the highlight is there to confirm; a connector per pair would multiply the
         /// handle count for no extra information at this scale.
+        /// </para>
+        /// <para>
+        /// The discs mark <i>vertices</i>, so they are drawn on the geometry the author sees: evaluated positions
+        /// when the renderer deforms through blend shapes, the rest pose otherwise. The pairs themselves remain
+        /// rest-pose data — a disc that follows the pose still marks the vertex the pair names.
+        /// </para>
         /// </remarks>
         private void DrawSeams(IApaAuthoringSceneHost host, ApaAuthoringSelection selection)
         {
@@ -389,7 +450,10 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (renderer == null || mesh == null || indices == null || indices.Length == 0) return;
             if (!mesh.isReadable) return;
 
-            if (!CacheFor(isPartMesh).TryRead(mesh, out var vertices, out _)) return;
+            var preview = PreviewFor(isPartMesh);
+            if (!preview.TryRead(renderer, mesh, out var vertices, out var source)) return;
+
+            if (!isPartMesh) _targetPreviewIsEvaluated = source == ApaPreviewPositionSource.Evaluated;
 
             var localToWorld = renderer.transform.localToWorldMatrix;
             Handles.color = color;
@@ -416,7 +480,8 @@ namespace AvatarPartAssembler.Editor.Authoring
             var renderer = selection != null ? selection.TargetRenderer : null;
 
             if (mesh != null && renderer != null && mesh.isReadable
-                && _targetArrays.TryRead(mesh, out var vertices, out var triangleIndices)
+                && _targetArrays.TryRead(mesh, out _, out var triangleIndices)
+                && _targetPreview.TryRead(renderer, mesh, out var vertices, out _)
                 && TryReadTriangle(triangleIndices, _hoveredTriangle, out var a, out var b, out var c)
                 && a < vertices.Length && b < vertices.Length && c < vertices.Length)
             {
@@ -458,6 +523,14 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (mask != null && mask.Count > MaxDrawnTriangles)
             {
                 text += TrFormat("\nshowing the first {0} removed triangles", MaxDrawnTriangles);
+            }
+
+            // The overlay follows the drawn geometry, but the seam pairs and the removal addresses are rest-pose
+            // data. Saying so on screen is what keeps "the red triangles moved with the pose" from reading as
+            // "the generated seam changed".
+            if (_targetPreviewIsEvaluated)
+            {
+                text += Tr("\npreview: current blend-shape pose; seam data stays rest-pose");
             }
 
             var style = StatusStyle;
