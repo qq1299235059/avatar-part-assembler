@@ -280,8 +280,6 @@ namespace AvatarPartAssembler.Tests.Authoring
         [Test]
         public void WholeMask_SelectsTheWholeTriangleList()
         {
-            RequireReadback();
-
             var mesh = TriangleMesh(new Vector2(0.25f, 0.25f), new Vector2(0.75f, 0.25f),
                 new Vector2(0.25f, 0.75f));
             var texture = WhiteTexture();
