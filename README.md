@@ -32,7 +32,7 @@ https://github.com/qq1299235059/avatar-part-assembler.git
 
 `package.json` 就在仓库根目录，所以不需要 `?path=` 后缀。想锁版本可以写成 `...git#v0.3.0-rc.6`。
 
-> 用 VCC / VPM 的话：本仓库没有提供 listing，请走上面的 git URL 通过 UPM 添加。
+> 用 VCC / VPM 的话，可以把发布清单 `https://qq1299235059.github.io/hajimi_vrc_package/index.json` 添加到 VCC；也可以继续使用上面的 git URL 通过 UPM 添加。
 
 ## 三分钟上手
 
