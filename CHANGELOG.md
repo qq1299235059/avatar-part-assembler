@@ -21,6 +21,9 @@ This release publishes [0.3.0-rc.10], [0.3.0-rc.11], and [0.3.0-rc.12] together.
   are unchanged.
 - The candidate color is entered as strict `#RRGGBB` (optionally `#RRGGBBAA`) text, defaulting to opaque black
   `#000000`. Profile loading runs in one isolated transition for both entry points.
+- The GitHub documentation was rewritten around the current workflow, and
+  `Documentation~/PART_AUTHORING_GUIDE.zh-CN.md` now gives creators the complete asset checklist, step-by-step
+  authoring process, hard constraints, animation checks, and release checklist.
 
 ## [0.3.0-rc.12] — mask-only removal authoring and reliable preview overlays
 

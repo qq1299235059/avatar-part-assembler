@@ -12,8 +12,8 @@ authoring asset.
 > **Builder 不猜，Validator 负责阻止错误资产进入构建。**
 > The builder does not guess; the validator keeps bad assets out of the build.
 
-> **简体中文文档：[`README.zh-CN.md`](README.zh-CN.md)**
-> The Simplified Chinese user documentation lives in [`README.zh-CN.md`](README.zh-CN.md).
+> **简体中文入口：[`README.zh-CN.md`](README.zh-CN.md)**
+> The creator workflow is documented in [`PART_AUTHORING_GUIDE.zh-CN.md`](PART_AUTHORING_GUIDE.zh-CN.md).
 > The plugin's UI is available in English and Simplified Chinese; see
 > [Language](#language). This file stays the English source of truth for the product's
 > behaviour, its policy tables, and its diagnostic registry.
@@ -22,8 +22,8 @@ authoring asset.
 
 ## Release-candidate status
 
-**This is release candidate `0.3.0-rc.12` (`0.3.0-rc.12` in `package.json`). It is not a
-1.0 release and the full acceptance checklist is still incomplete.**
+**This is package version `0.4.0`. It is not a 1.0 release and the full acceptance checklist
+is still incomplete.**
 
 The core build path has now been exercised in Unity 2022.3.22f1 rather than only reviewed
 statically. A real NDMF `AvatarProcessor` run completed successfully on the project test
@@ -45,12 +45,12 @@ is a bug.
 | M2 | Skinning, final bone table, bind poses, blend shape remapping | Implemented |
 | M3 | NDMF Generating/Transforming passes, transient Modular Avatar merge-armature setup, post-merge verification | **Runtime build validated** |
 | M4 | NDMF Scene View preview over the same process, fingerprint cache with invalidation, debug overlay | Implemented; full visual acceptance pending |
-| M5 | Part Authoring window, removal/seam pickers, UV and material semantics editors, profile writer, prefab generator, installer inspector | Implemented |
+| M5 | Part Authoring window, mask-based removal authoring, world-position seam generation, UV/material semantics editors, profile writer, prefab generator, installer inspector | Implemented |
 | M6 | Multi-target grouping, slot modes, conflict priority, material anchors, undeclared-UV and part-only-shape policies, schema v3 | Implemented |
 | M7 | Stabilization, release-candidate versioning, consolidated documentation, user acceptance checklist | Implemented |
 | M8 | English / Simplified Chinese UI localization, `README.zh-CN.md`, localization contract tests | Implemented |
 | M9 | Black/white texture-mask removal selection: mask → deterministic triangle set, `APA041`, fixed 7-sample rule | Implemented |
-| M10+ | Explicit armature selections, stored seam pairs, body-authoritative bone remapping, UV-seam preservation, post-MA armature scope hardening, and Play Mode / Gesture Manager compatibility | **Runtime build path validated; remaining acceptance pending** |
+| M10+ | Explicit armature selections, stored seam pairs, body-authoritative bone remapping, UV-seam preservation, vertex-color candidates, animator retargeting, empty-source cleanup, and Play Mode / Gesture Manager compatibility | **Runtime build path validated; remaining acceptance pending** |
 
 The current runtime result does **not** imply that every ecosystem combination has been
 accepted. In particular, complete Scene View preview acceptance, every optional third-party
@@ -114,7 +114,7 @@ whether the Test Runner can see and run it.
 
 ## Play Mode and Gesture Manager
 
-`0.3.0-rc.12` enables Play Mode compatibility by default. When a loaded scene contains an
+`0.4.0` enables Play Mode compatibility by default. When a loaded scene contains an
 `AvatarPartInstaller`, APA temporarily enables NDMF's official **Apply On Play** setting before
 entering Play Mode.
 
@@ -1067,7 +1067,7 @@ Two version numbers, never conflated:
 | Version | Meaning | Current value |
 | --- | --- | --- |
 | `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **5** (`ApaPartProfile.CurrentSchemaVersion`) |
-| Package version in `package.json` | The shipped build | **0.3.0-rc.12** |
+| Package version in `package.json` | The shipped build | **0.4.0** |
 
 Migration policy:
 
@@ -1377,7 +1377,7 @@ observation of them (checklist 6.7) is still open.
 
 ### Release-candidate versioning
 
-`0.3.0-rc.12` is a **prerelease**. Per semver it sorts before `0.3.0`, so no VPM
+`0.4.0` is a **release candidate**. It is not a 1.0 release, so no VPM
 resolution will treat it as the stable `0.3.0`. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
 no document, changelog entry, or commit message in this package may describe the

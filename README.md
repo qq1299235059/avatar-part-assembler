@@ -1,96 +1,101 @@
 # Avatar Part Assembler
 
-面向 VRChat 模块化角色身体部件的**非破坏性、确定性**装配工具。
+Avatar Part Assembler（APA）是一个面向 VRChat 模块化 Avatar 部件的 Unity/NDMF 插件。
+它把部件安装声明、目标身体三角形移除、接缝焊接、蒙皮、形态键、UV、材质与骨骼处理放进同一条
+可预览、可验证、可回滚的构建流水线。
 
-> **Builder 不猜，Validator 负责阻止错误资产进入构建。**
-> The builder does not guess; the validator keeps bad assets out of the build.
+> APA 不修改作者的原始网格，也不把部件永久写进 Avatar。预览和上传构建都在 NDMF 的临时对象上完成。
 
-- 版本：`0.3.0-rc.12`（发布候选，不是 1.0）
-- Unity：2022.3
-- 界面语言：English / 简体中文
+当前版本：`0.4.0` · Unity `2022.3` · 界面支持 English / 简体中文
 
-部件作者发布一个预制体，用户把它拖到自己的角色下即可。插件移除原身体上被声明的区域，在**顶点级别**把部件的接缝焊接到身体的接缝上，并把几何体、蒙皮、形态键、UV 语义、材质语义和骨骼合并成**每个目标渲染器一张生成网格**。把预制体删掉，角色与之前完全一致——因为工具从未写入任何制作资产。
+## 先看哪一份文档
 
----
+- 部件作者：[`Documentation~/PART_AUTHORING_GUIDE.zh-CN.md`](Documentation~/PART_AUTHORING_GUIDE.zh-CN.md)
+  ——从建模准备到发布部件的完整步骤、资产清单和强制约束。
+- Avatar 使用者：直接阅读下面的“安装部件”部分。
+- 技术实现、装配策略和诊断注册表：[`Documentation~/OVERVIEW.md`](Documentation~/OVERVIEW.md)。
+- 变更历史：[`CHANGELOG.md`](CHANGELOG.md)。
+- 人工验收清单：[`USER_ACCEPTANCE_CHECKLIST.md`](USER_ACCEPTANCE_CHECKLIST.md)。
 
 ## 安装
 
-先准备好这些依赖：
+依赖环境：
 
 | 依赖 | 版本 |
 | --- | --- |
-| Unity | 2022.3 |
+| Unity | `2022.3` |
 | VRChat SDK – Avatars | `>=3.10.4 <3.11.0` |
 | NDMF | `>=1.14.0 <2.0.0-a` |
 | Modular Avatar | `>=1.18.0-beta.0 <2.0.0-a` |
 
-然后 Unity Package Manager → `+` → **Add package from git URL**：
+在 Unity 的 Package Manager 中选择 **+ → Add package from git URL**，填入：
 
-```
+```text
 https://github.com/qq1299235059/avatar-part-assembler.git
 ```
 
-`package.json` 就在仓库根目录，所以不需要 `?path=` 后缀。想锁版本可以写成 `...git#v0.3.0-rc.12`。
+也可以在 VCC/VPM 中添加发布清单后安装。锁定版本时使用仓库已有的 tag，例如：
 
-> 用 VCC / VPM 的话，可以把发布清单 `https://qq1299235059.github.io/hajimi_vrc_package/index.json` 添加到 VCC；也可以继续使用上面的 git URL 通过 UPM 添加。
+```text
+https://github.com/qq1299235059/avatar-part-assembler.git#v0.4.0
+```
 
-## 三分钟上手
+## 安装一个已有部件
 
-**部件作者**
+1. 将部件作者提供的 `.unitypackage`、VPM 包或部件目录导入工程。
+2. 把部件预制体拖到 Avatar 根对象下。预制体根节点应带有 `AvatarPartInstaller`。
+3. 确认安装器上的 Profile 已存在，且组件处于启用状态。
+4. 在 NDMF 预览中检查结果，再进入 Play Mode/Gesture Manager 测试；最终上传时仍由同一条 NDMF 流程处理。
+5. 卸载时删除部件预制体。APA 不会把修改写回原 Avatar 网格。
 
-1. 把部件摆到与身体一致的姿态，选中部件根节点。
-2. 打开 `Tools / Avatar Part Assembler / Part Authoring`（中文菜单 `Tools / 部件装配器 / 部件编辑`）。
-3. 在窗口中分配稳定部件 ID，然后依次填：目标渲染器 → 移除区域 → 接缝配对 → UV / 材质语义 → 骨骼与形态键策略。
-   - 移除区域只通过黑白遮罩纹理生成（固定 7 点采样规则）；Scene View 拾取、数值地址和子网格批量删除已移除。
-   - 接缝由 `ApaSeamWorldMatcher` 在**世界空间**生成一对一配对并写进 Profile。
-   - 自动生成只限制**部件网格**：`Candidate Color` 默认是黑色 `#000000`，只有部件 `Mesh.colors32` 四个通道（含 alpha）与该颜色完全相等的顶点才是候选。目标网格不需要顶点色，目标侧仍按世界空间位置搜索。部件缺失顶点色、颜色数量不一致、或没有匹配顶点时以 `APA052` 阻断，绝不退回全顶点搜索。
-   - 接缝候选色使用 `#RRGGBB` 色号输入（可选 `#RRGGBBAA`），格式错误时保留上一次有效值，不会触发网格读取。重新打开窗口或加载 Profile 时，目标骨架和部件骨架会从 Profile 保存的相对路径恢复。
-   - 接缝顶点的有效权重只能指向目标 Avatar 的骨骼；不要在接缝上保留部件专属或不存在于目标的权重组。制作窗口中的红色移除叠加层默认关闭，需要时用 `Removal Overlay` 开关打开；绿色候选叠加层与 `Merge Check Overlay`（预演配对，不写入任何数据）会在 Scene View 注册后显示。
-4. 保存。所有写入都经过唯一入口 `ApaProfileWriter`，产出 `ApaPartProfile` 资产和带 `AvatarPartInstaller` 的预制体。
+安装器默认启用“跟随 Avatar 骨骼”和“包含缩放”，它们是编辑器中的摆放辅助，不会改变 Profile 的构建数据。
+部件制作、导出和兼容性约束请按[部件制作指南](Documentation~/PART_AUTHORING_GUIDE.zh-CN.md)执行。
 
-**使用者**
+## APA 的工作方式
 
-把部件预制体拖到角色下就可以。编写期预览、Play Mode / Gesture Manager 测试、真实上传构建走的是同一条流水线。
+- Profile 保存稳定部件 ID、目标网格签名、移除三角形集合、显式接缝配对、UV/材质语义、骨架路径和形态键策略。
+- 当前新建 Profile 使用 Schema 5；旧 Profile 不会被静默改写，缺少必要的骨架、配对或指纹信息时会要求重新制作。
+- 接缝在制作阶段按世界坐标生成一对一配对；构建阶段只消费已保存的配对，不会重新猜测。
+- 部件接缝候选由部件网格的 `Mesh.colors32` 精确颜色筛选；目标身体仍按空间位置匹配，不要求目标网格有顶点色。
+- 目标身体和部件网格会被读取为不可变快照，输出是每个目标渲染器对应的一张生成网格。
+- 预览、Play Mode/Gesture Manager 和上传构建共享同一个 NDMF 处理器；非法输入会在生成任何网格前阻断。
+- Profile 与网格会使用内容指纹校验。网格重新导入后，即使顶点数量没有变化，只要属性改变，也会要求重新捕获 Profile。
+- 同名的 Modular Avatar Merge Animator 动画会在装配后重定向到合并目标渲染器；空的部件源对象会在构建结果中清理。
 
-## 它真正在解决什么
+## 最重要的作者约束
 
-| 问题 | 做法 |
-| --- | --- |
-| 结果不可复现 | 禁用进程随机化哈希（`System.HashCode` / `GetHashCode`），统一 FNV-1a 64；所有排序都是显式 ordinal 键；字典遍历前必须先排序 |
-| 弄脏作者资产 | `MeshSnapshot` 是带所有权语义的不可变托管副本，核心流水线只读、绝不写回 |
-| 接缝靠猜 | 接缝必须是 Profile 里存下来的**一对一显式配对**（`PairingVersion = ExplicitPairing`），构建期不做任何位置搜索，legacy 未配对直接报 `APA042` |
-| 构建半途炸掉 | `ApaBuildProcessor.Process` 是六步事务：前五步不改动场景，任一装配组失败则整体逆序回滚，不留半成品 |
-| 预览和上传不一致 | 预览与构建共用同一门面 `ApaCore`、同一事务、同一诊断类型，唯一差异是 `allowPostMergePartArmatureScope` |
-| 报错说不清 | APA001–APA049 / APA050 / APA052 / APA999，一码一义、退役码不复用（`APA051` 已退役，保留原义不回收）；无法恢复的字段一律硬拒绝并给出稳定 `reason=` token |
+以下不是“建议”，而是部件能否可靠发布的边界：
+
+1. 目标身体必须是 `SkinnedMeshRenderer`，目标渲染器在选定 Avatar 根对象之下；部件渲染器必须在部件根对象之下。
+2. 所有需要保存进 Profile 或预制体的引用都必须是项目资产或预制体内部引用，不能引用制作场景里的临时对象。
+3. 部件 ID 必须稳定且唯一。不要用部件显示名称、父节点名称或当前层级路径代替 ID。
+4. 只对部件网格绘制接缝候选颜色。颜色按 `Color32` 四通道精确比较，默认色号为 `#000000`；不要依赖颜色渐变、抗锯齿或只改变 RGB 而忽略 alpha。
+5. 接缝顶点不得携带 Avatar 没有的有效骨骼权重。所有有效权重必须指向部件骨架内真实骨骼；有效权重之和必须大于 `1e-5`，且不能为负数、NaN 或 Infinity。
+6. 目标骨架和部件骨架必须显式选择，并且层级相互对应。相同的相对骨骼路径表示同一个关节，目标身体的骨骼拥有最终权威；不要在部件中为同一关节制作另一套不对应的权重骨骼。
+7. 需要真正焊接的接缝顶点必须处于同一静置姿势，并在默认 `1e-4` 世界单位容差内重合。不要通过放宽容差来掩盖建模错位。
+8. 如果接缝两侧同名 UV 语义不同，APA 会保留部件侧的分裂顶点而不是悄悄丢 UV。需要焊接的 UV 必须在对应语义下相同。
+9. 同名形态键必须拥有相同的帧数量和帧权重；部件独有形态键在焊接接缝上的位置、法线和切线增量必须为零。
+10. 所有材质必须是项目中的 Material 资产。不要把只存在于场景中的材质拖进 Profile。
+
+违反这些约束时，优先修复源资产，不要把验证错误当成可以忽略的警告。
+
+## 构建结果与安全性
+
+APA 采用事务式装配：规划、验证、网格生成和清理任何一步失败，都会阻止该组输出；不会留下半生成网格。
+原始场景网格、Avatar 预制体和部件作者的源资产不会被写回。生成的配置文件和部件预制体是可移植发布物，
+其中不应包含制作场景对象的引用。
 
 ## 仓库结构
 
 | 路径 | 内容 |
 | --- | --- |
-| `Runtime/` | 契约层：`ApaPartProfile`、`AvatarPartInstaller`、诊断类型、数值策略、骨骼签名（随包发布，让 prefab 自描述） |
-| `Editor/` | 核心流水线：`ApaCore` 门面、网格快照、11 条校验规则、解析、装配规划、`MeshAssembler` |
-| `Editor/NDMF/` | NDMF 插件、两个 pass、`ApaBuildProcessor` 事务处理器 |
-| `Editor/Preview/` | NDMF 实时预览、指纹缓存与 LRU 租约 |
-| `Editor/Authoring/` | 部件编辑窗口、移除 / 接缝拾取、Profile 写入器 |
-| `Tests/Editor/` | 410 个测试，含基于源码文本扫描的静态契约测试 |
-| `Documentation~/` | 完整英文产品文档（Unity 不会导入该目录） |
-| `README.zh-CN.md` | 完整简体中文使用文档 |
-| `CHANGELOG.md` | 变更历史 |
-| `USER_ACCEPTANCE_CHECKLIST.md` | 验收清单 |
-
-## 文档
-
-- 完整英文产品文档（策略表 + 诊断注册表）：[`Documentation~/OVERVIEW.md`](Documentation~/OVERVIEW.md)
-- 完整简体中文使用文档：[`README.zh-CN.md`](README.zh-CN.md)
-- 变更历史：[`CHANGELOG.md`](CHANGELOG.md)
-- 验收清单：[`USER_ACCEPTANCE_CHECKLIST.md`](USER_ACCEPTANCE_CHECKLIST.md)
-- 第三方依赖：[`Third Party Notices.md`](Third%20Party%20Notices.md)
-
-## 当前状态
-
-发布候选。真实 NDMF 运行时构建路径已经在 Unity 2022.3.22f1 上跑通，但**完整验收仍未完成**：Scene View 预览的完整视觉验收、更多生态组合（AAO、lilToon、PhysBone、Contacts、prefab variant 等）、以及端到端 VRChat 上传都还在清单里。
-
-也就是说：核心路径可用，但请把它当作 RC 而不是稳定版，上传前自己过一遍 `USER_ACCEPTANCE_CHECKLIST.md`。
+| `Runtime/` | Profile、Installer、诊断和运行时数据契约 |
+| `Editor/Authoring/` | 部件编辑窗口、Profile/Prefab 写入、候选与预览叠加层 |
+| `Editor/Assembly/` | 网格、蒙皮、UV、材质、形态键和骨骼装配核心 |
+| `Editor/NDMF/` | 预览、Play Mode 和上传构建入口 |
+| `Editor/Validation/` | 兼容性、接缝、权重和属性验证规则 |
+| `Tests/Editor/` | EditMode 与源码契约测试 |
+| `Documentation~/` | 面向作者和维护者的文档 |
 
 ## 许可证
 
