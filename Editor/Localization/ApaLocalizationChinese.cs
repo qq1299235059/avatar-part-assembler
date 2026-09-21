@@ -207,6 +207,52 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "exists — the draft differs from it", "已存在 — 草稿与其不一致" },
                 { "exists — the draft matches it", "已存在 — 草稿与其一致" },
 
+                // ---- Protected part mesh (output option) ------------------------------------------------
+                { "Protect the part mesh (write an encrypted payload instead of the mesh)",
+                  "保护部件网格（写入加密载荷而不是网格）" },
+                { "Off: the prefab references the source mesh exactly as it always has.",
+                  "关闭：预制体像以往一样直接引用源网格。" },
+                { "Protected Mesh Asset", "受保护网格资产" },
+                { "A protected mesh asset already exists at this path. Replacing it is asked for again when the " +
+                  "prefab replacement is confirmed.",
+                  "该路径已存在受保护网格资产。确认替换预制体时会再次询问是否替换它。" },
+                { "The part mesh is written to the protected asset as an authenticated, encrypted payload and " +
+                  "the prefab's part renderer is saved with no mesh, so the prefab no longer depends on the " +
+                  "source mesh or its model file. The payload must be delivered together with the prefab: a " +
+                  "prefab whose payload is missing cannot be assembled. This protects the distribution format " +
+                  "and detects tampering; it is not unextractable DRM, because a build that runs in the Editor " +
+                  "can be observed while it runs. Materials, textures, bones, and animation remain ordinary " +
+                  "assets. Recreate the protected prefab after the source mesh changes.",
+                  "部件网格会以经过认证的加密载荷写入受保护资产，预制体的部件渲染器则保存为不带网格，" +
+                  "因此预制体不再依赖源网格或其模型文件。该载荷必须与预制体一起分发：缺少载荷的预制体无法装配。" +
+                  "这保护的是分发格式并能检测篡改，并不是不可提取的 DRM —— 在编辑器中运行的构建过程可以被观察。" +
+                  "材质、贴图、骨骼与动画仍然是普通资产。源网格变化后必须重新创建受保护预制体。" },
+                { "Wrote the protected mesh payload to '{0}'.", "已将受保护网格载荷写入 '{0}'。" },
+                { "Cleared the part renderer's mesh reference in the saved prefab ('{0}'); the geometry now lives " +
+                  "only in the protected payload.",
+                  "已清除保存的预制体中部件渲染器的网格引用（'{0}'）；几何体现在只存在于受保护载荷中。" },
+                { "The existing prefab at '{0}' was replaced with the scene part, but the protected payload could " +
+                  "not be published because {1}. The prefab is present but unconfigured; restore it from version " +
+                  "control if that content mattered.",
+                  "位于 '{0}' 的已有预制体已被场景中的部件替换，但由于{1}，受保护载荷未能发布。该预制体存在但未配置完成；" +
+                  "如果原有内容重要，请从版本控制恢复。" },
+                { "The existing prefab at '{0}' was replaced with the scene part, but the written prefab still " +
+                  "depends on the source mesh or its model file, so it was removed again. Restore the prefab from " +
+                  "version control if its previous content mattered.",
+                  "位于 '{0}' 的已有预制体已被场景中的部件替换，但写出的预制体仍然依赖源网格或其模型文件，因此已被再次移除。" +
+                  "如果原有内容重要，请从版本控制恢复该预制体。" },
+                { "The existing prefab at '{0}' was replaced with the scene part, but the written prefab does not " +
+                  "carry the protected mesh reference, so it was removed again. Restore the prefab from version " +
+                  "control if its previous content mattered.",
+                  "位于 '{0}' 的已有预制体已被场景中的部件替换，但写出的预制体没有携带受保护网格引用，因此已被再次移除。" +
+                  "如果原有内容重要，请从版本控制恢复该预制体。" },
+                { "the part still references the source mesh or model file '{0}' from {1} other component " +
+                  "reference(s)",
+                  "部件仍通过另外 {1} 个组件引用指向源网格或模型文件 '{0}'" },
+                { "the reference scan stopped at its property budget after {0} properties, so the prefab cannot be " +
+                  "proven free of the source mesh",
+                  "引用扫描在检查 {0} 个属性后达到预算上限，因此无法证明该预制体不含源网格" },
+
                 // ---- Removal section -------------------------------------------------------------------
                 { "Removal Region", "移除区域" },
                 { "Selected", "已选" },
@@ -381,14 +427,16 @@ namespace AvatarPartAssembler.Editor.Localization
                   "将已匹配的接缝候选显示为绿色，将未匹配的部件候选显示为红色。" },
                 { "Draw the triangles the removal mask generated in the Scene View. Off by default. It is a " +
                   "read-only visualization of the authored removal set: it follows the target's current " +
-                  "blend-shape pose, while the removal set itself stays a set of triangle addresses, and " +
+                  "skinned pose, while the removal set itself stays a set of triangle addresses, and " +
                   "clicking in the Scene View never edits it.",
                   "在场景视图中绘制移除遮罩生成的三角形。默认关闭。它只是对已制作移除集合的只读可视化：" +
-                  "会跟随目标当前的形态键姿势，而移除集合本身始终是一组三角形地址，在场景视图中点击不会修改它。" },
-                { "preview: current blend-shape pose; seam data stays rest-pose",
-                  "预览：当前形态键姿势；接缝数据仍为静置姿势" },
-                { "\npreview: current blend-shape pose; seam data stays rest-pose",
-                  "\n预览：当前形态键姿势；接缝数据仍为静置姿势" },
+                  "会跟随目标当前的蒙皮姿势，而移除集合本身始终是一组三角形地址，在场景视图中点击不会修改它。" },
+                { "preview: current skinned pose; seam data stays rest-pose",
+                  "预览：当前蒙皮姿势；接缝数据仍为静置姿势" },
+                { "\npreview: current skinned pose; seam data stays rest-pose",
+                  "\n预览：当前蒙皮姿势；接缝数据仍为静置姿势" },
+                { "\npreview: current skinned pose; matched/unmatched indices stay rest-pose",
+                  "\n预览：当前蒙皮姿势；匹配/未匹配的索引仍为静置姿势" },
                 { "(missing)", "（缺失）" },
                 { "Mesh Fingerprint", "网格指纹" },
                 { "mesh fingerprint", "网格指纹" },
@@ -417,9 +465,15 @@ namespace AvatarPartAssembler.Editor.Localization
                 // ---- Material section ------------------------------------------------------------------
                 { "Material Semantics", "材质语义" },
                 { "Infer From Materials", "从材质推断" },
-                { "A material must be a project asset: a scene material cannot be stored in a reusable profile " +
-                  "(APA034). The asset name is never used as the semantic.",
-                  "材质必须是项目资产：场景中的材质无法存入可复用的配置文件（APA034）。资产名称绝不会被用作语义。" },
+                { "The material field is this profile's authoring default. The build takes the part renderer's " +
+                  "own material in that slot and falls back to this asset only when the renderer has none " +
+                  "there, so replacing a material on the renderer is what changes the built avatar and is " +
+                  "never written back into this profile. A material must be a project asset: a scene material " +
+                  "cannot be stored in a reusable profile (APA034). The asset name is never used as the " +
+                  "semantic.",
+                  "材质字段是本配置文件的创作默认值。构建会采用部件渲染器该槽位上的材质，仅当渲染器该槽位没有材质时才回退到此资产；" +
+                  "因此在渲染器上替换材质才会改变构建出的角色，且绝不会写回本配置文件。材质必须是项目资产：场景中的材质无法存入可复用的配置文件（APA034）。" +
+                  "资产名称绝不会被用作语义。" },
                 { "Material semantic problems", "材质语义问题" },
                 { "Select a part renderer before inferring material semantics.",
                   "请先选择部件渲染器，再推断材质语义。" },
@@ -521,6 +575,19 @@ namespace AvatarPartAssembler.Editor.Localization
                   "以下位置已存在预制体：\n\n{0}\n\n替换会用当前场景中的部件覆盖已有预制体的内容。" +
                   "若要保留预制体自身的内容，请改用“更新预制体上的安装器”。要替换吗？" },
                 { "Cancel", "取消" },
+                { "Replace existing protected mesh asset?", "替换已有的受保护网格资产？" },
+                { "Replace existing prefab and protected mesh asset?", "替换已有的预制体和受保护网格资产？" },
+                { "A protected mesh asset already exists at\n\n{0}\n\nReplacing it keeps the asset's GUID, so a " +
+                  "prefab that already references it keeps working, and it is restored if the prefab cannot be " +
+                  "written. Replace it?",
+                  "以下位置已存在受保护网格资产：\n\n{0}\n\n替换会保留该资产的 GUID，因此已经引用它的预制体仍然可用；" +
+                  "若预制体写入失败，它会被还原。要替换吗？" },
+                { "A prefab already exists at\n\n{0}\n\nThe protected mesh asset at\n\n{1}\n\nis replaced as well, " +
+                  "keeping its GUID so a prefab that already references it keeps working. Use 'Update installer " +
+                  "on prefab' instead to keep the prefab's own content. Replace both?",
+                  "以下位置已存在预制体：\n\n{0}\n\n位于\n\n{1}\n\n的受保护网格资产也会一并替换，并保留其 GUID，" +
+                  "因此已经引用它的预制体仍然可用。若要保留预制体自身的内容，请改用“更新预制体上的安装器”。" +
+                  "要同时替换两者吗？" },
                 { "Profile write cancelled. Nothing was written to '{0}'.",
                   "已取消写入配置文件。未向 '{0}' 写入任何内容。" },
                 { "Prefab creation cancelled. Nothing was written to '{0}'.",
@@ -821,7 +888,9 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Assemble part geometry into the target body mesh", "将部件几何体装配到目标身体网格" },
                 { "Retarget consumed part animation onto the target renderer",
                   "将已消费部件的动画重定向到目标渲染器" },
-                { "Remove consumed part objects left empty", "移除已消费且变空的部件对象" }
+                { "Remove consumed part objects left empty", "移除已消费且变空的部件对象" },
+                { "Restore protected part meshes in memory", "在内存中还原受保护部件网格" },
+                { "Release transient protected part meshes", "释放临时受保护部件网格" }
             };
 
         /// <summary>

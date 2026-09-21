@@ -837,13 +837,23 @@ namespace AvatarPartAssembler.Editor.Authoring
             draft.Compatibility = ApaCompatibilityCapture.Capture(
                 avatarRoot.gameObject, target, out var captureIssues, targetArmature);
 
-            var partMesh = ApaCompatibilityCapture.ResolveMesh(partRoot.GetComponentInChildren<Renderer>(true));
+            var partRenderer = partRoot.GetComponentInChildren<Renderer>(true);
+            var partMesh = ApaCompatibilityCapture.ResolveMesh(partRenderer);
             if (partMesh != null && partMesh.isReadable)
             {
                 var snapshot = MeshSnapshotFactory.Capture(partMesh, null, out _);
                 draft.InferUvSemanticsFrom(snapshot);
-                var renderer = partRoot.GetComponentInChildren<Renderer>(true);
-                draft.InferMaterialSemanticsFrom(partMesh.subMeshCount, renderer != null ? renderer.sharedMaterials : null);
+                draft.InferMaterialSemanticsFrom(partMesh.subMeshCount, partRenderer != null ? partRenderer.sharedMaterials : null);
+            }
+            else if (partRenderer != null
+                     && ApaProtectedPartGeometry.TryDecode(
+                         partRenderer, partRoot.gameObject, out var protectedData, out _, out _))
+            {
+                // A protected part's renderer carries no mesh; its payload is the geometry, and it is the same
+                // geometry the window's `Infer From Part Mesh` actions read. Decoding through the shared helper
+                // keeps this shortcut's proposal identical to what the author would get in the window.
+                draft.InferUvSemanticsFrom(protectedData.CreateSnapshot());
+                draft.InferMaterialSemanticsFrom(protectedData.SubMeshCount, partRenderer.sharedMaterials);
             }
 
             // This shortcut writes a profile, so it owes the same proof the window owes: a draft that validates

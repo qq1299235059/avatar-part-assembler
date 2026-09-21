@@ -195,6 +195,18 @@ namespace AvatarPartAssembler.Editor.Preview
                 context.Observe(profile, ProfileToken);
             }
 
+            // A protected part's geometry lives in a payload asset, not in a mesh, so editing that asset has to
+            // invalidate the preview exactly like editing a mesh would. The change stream covers an Undo-recorded
+            // edit; the content token covers a write made without Undo, which is how a replaced payload usually
+            // arrives. The token is the payload's cheap content revision, not a hash of the ciphertext on every
+            // frame: the asset caches the full hash and only recomputes it when its sample of the bytes changes.
+            var protectedMesh = installer.ProtectedMesh;
+            if (protectedMesh != null && scope.Objects.Add(protectedMesh.GetInstanceID()))
+            {
+                context.Observe(protectedMesh);
+                context.Observe(protectedMesh, ProtectedMeshToken);
+            }
+
             ObserveRenderer(context, RendererOf(installer.TargetRendererObject), scope);
 
             var partRoot = installer.ResolvePartRoot();
@@ -373,6 +385,35 @@ namespace AvatarPartAssembler.Editor.Preview
                 profile.SchemaVersion,
                 identity != null ? identity.PartId : null,
                 profile.IsSchemaSupported);
+        }
+
+        /// <summary>
+        /// The poll token of a protected payload: whether it has one, and the revision of its bytes.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <see cref="ApaProtectedMeshAsset.ContentRevision"/> is a cached hash of the ciphertext, invalidated by
+        /// a cheap sample of the array's identity, length, and first and last bytes. Reading it is therefore a
+        /// handful of byte comparisons on an unchanged payload, and one full hash pass when the payload actually
+        /// changed — which is the correct price for noticing a change that was made without Undo.
+        /// </para>
+        /// <para>
+        /// The declared plaintext length and the salt/IV/tag lengths are part of the token as well: a payload
+        /// whose ciphertext happens to hash the same while its envelope was rebuilt is a different payload, and
+        /// the decode cache keys on the same values.
+        /// </para>
+        /// </remarks>
+        private static (bool present, int revision, int plaintextLength, int envelopeLength) ProtectedMeshToken(
+            ApaProtectedMeshAsset asset)
+        {
+            if (asset == null) return (false, 0, 0, 0);
+
+            return (
+                true,
+                asset.ContentRevision,
+                asset.PlaintextLength,
+                asset.CiphertextLength + ApaProtectedMeshAsset.SaltLength +
+                ApaProtectedMeshAsset.IvLength + ApaProtectedMeshAsset.TagLength);
         }
 
         private static (Mesh mesh, int materialsHash, int bonesHash, Transform rootBone, bool enabled,

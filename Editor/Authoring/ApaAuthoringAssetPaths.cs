@@ -51,6 +51,19 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <summary>Extension of a prefab asset.</summary>
         public const string PrefabExtension = ".prefab";
 
+        /// <summary>Extension of a protected-mesh payload asset.</summary>
+        public const string ProtectedMeshExtension = ".asset";
+
+        /// <summary>
+        /// File-name suffix of a protected-mesh payload, so the asset is recognizable beside its prefab.
+        /// </summary>
+        /// <remarks>
+        /// The payload is derived from the prefab path rather than typed separately, and the suffix is what makes
+        /// the pairing visible in the Project window: a creator assembling a delivery folder can see at a glance
+        /// which payload belongs to which prefab.
+        /// </remarks>
+        public const string ProtectedMeshSuffix = "_ProtectedMesh";
+
         /// <summary>Default folder offered for newly authored parts.</summary>
         public const string DefaultOutputFolder = "Assets/AvatarPartAssembler";
 

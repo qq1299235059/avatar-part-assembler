@@ -88,7 +88,7 @@ Prerequisite: 1.1 passes. Use a body with at least one part prefab and an
 | 3.5 | Live invalidation — transform | Move the part prefab in the hierarchy. | The preview refreshes within about one frame; no stale geometry is left behind. | |
 | 3.6 | Live invalidation — child transform | Move or rename a **child** of the part root (not the root itself). | The preview refreshes. This is the check that catches "watch the object, not its subtree". | |
 | 3.7 | Live invalidation — profile | Edit a field on `ApaPartProfile` (for example a semantic name). | The preview refreshes; there is no frame where a stale successful preview survives the edit. | |
-| 3.8 | Live invalidation — material | Swap a material referenced by a `MaterialSemantics` row. | The preview refreshes. | |
+| 3.8 | Live invalidation — material | Swap a material referenced by a `MaterialSemantics` row, and separately swap the material in the part renderer's own slot. | The preview refreshes, and the renderer's slot is the material the build uses: a swap there wins over a stale declaration in the profile, which is only the fallback for a slot the renderer cannot name. | |
 | 3.9 | Invalidation to invalid | Break the input (for example delete the seam selection, or make the base and part seam cardinality differ). | The proxy **disappears** and the original body comes back; the reason is reported as a diagnostic, not swallowed. | |
 | 3.10 | Two target groups | Use an avatar with parts welded to the body renderer and parts welded to a second renderer (for example clothing). | Each group previews against its own target; no cross-group geometry appears. | |
 | 3.11 | Disabled installer | Untick the component's `enabled`, then deactivate its GameObject, then clear `EnabledForBuild` — one at a time. | Each condition removes the preview **and deletes no body triangles**; the skip is reported (informational), not silent. | |
@@ -282,7 +282,29 @@ before it builds; until then the build refuses it with `APA042` and `APA043`.
 
 ---
 
-## 13. Acceptance summary
+## 13. Protected part mesh mode (0.5.0)
+
+These rows cover the optional protected/encrypted mesh mode and the two defects it exposed: a
+protected prefab being misreported as a mesh-less part, and preview materials not following the
+live renderer/profile state. Everything here is manual observation; the corresponding EditMode
+tests live in `Tests/Editor/Protected*.cs`.
+
+| # | Check | Exact steps | Pass criteria | Result |
+| --- | --- | --- | --- | --- |
+| 14.1 | Protected creation writes a payload and no mesh | In `Tools > Avatar Part Assembler > Part Authoring`, select a valid part, turn on **Protect the part mesh** in the Output area, and press `Create Part Prefab`. Inspect the prefab and the file beside it. | The prefab is created; `<prefab>_ProtectedMesh.asset` exists beside it; the installer's `Protected Mesh` field references it; the part renderer's `Mesh` field is empty. Selecting the prefab in the Project window shows **no** dependency on the source mesh or its `.fbx`. The authoring scene's own renderer still has its mesh. | |
+| 14.2 | A protected part is not reported as a mesh-less part | Drag the protected prefab under an avatar, keep the NDMF preview open, and read the console. Then build (`Build & Test`) and read the report. | No `APA006 TARGET_RENDERER_NOT_FOUND` and no `reason=missing-part-mesh` appears. The preview shows the assembled body including the part's geometry, and the build produces the same result. | |
+| 14.3 | An ordinary mesh-less part still reports `APA006` | On a second part, clear the renderer's `Mesh` (and leave no protected asset on its installer), then preview and build. | Both block with `APA006 TARGET_RENDERER_NOT_FOUND`, `reason=missing-part-mesh`, and a message that says to assign the source mesh or create the prefab in protected mode. No protected-payload diagnostic (`APA053`) appears. | |
+| 14.4 | A missing payload fails closed | Delete the `_ProtectedMesh.asset` (or move it out of the project) while the prefab still references it, then preview and build. | Both block with `APA053 PROTECTED_MESH_INVALID reason=protected-mesh-missing`. Nothing is assembled, and the part is not silently treated as an ordinary empty renderer. Restoring the asset makes both work again without a domain reload. | |
+| 14.5 | A tampered payload fails closed | Edit the `.asset` bytes (for example flip a byte in the ciphertext with a hex editor, or replace it with another part's payload), then preview and build. | `APA053` with `reason=authentication-failed` for a flipped byte, and `reason=part-id-mismatch` for another part's payload. No geometry is produced in either case. | |
+| 14.6 | The overlays draw a protected part | With the protected prefab in the scene, open the authoring window, select the prefab's part root and renderer, and turn on the seam candidate and merge-check overlays; apply a texture mask. | The candidate discs, the merge-check classification, and the UV/material inference actions all work from the payload's geometry. Nothing is assigned to the scene renderer (its `Mesh` field stays empty), and closing the window leaves no transient object behind. | |
+| 14.7 | A source-mesh leak is refused | Add a `MeshCollider` to the part root and assign the source mesh, then create the protected prefab again. | The creation is refused with `APA054 PROTECTED_MESH_SOURCE_LEAK`; neither the prefab nor the payload is left behind; the scene is untouched. | |
+| 14.8 | Material swaps and edits reach the preview | With the preview open, swap the material in one of the part renderer's slots (the profile may still declare the old asset); then change the colour (or a texture, shader, or keyword) of a material that the part or body references; then clear the renderer's slot and repoint the profile material declaration at another asset, and re-save the profile. | Each change is visible in the preview without touching the scene, and the geometry does not flicker or rebuild visibly. The renderer's own slot is the material the build uses, so a swap there wins over a stale profile declaration; the profile's asset is used only when the renderer has no material in that slot. The preview never clones the material: the object drawn is the author's own asset. | |
+| 14.9 | A protected payload survives preview, play mode, and build identically | With the protected prefab installed, compare the NDMF preview, the Play Mode/Gesture Manager result, and the built avatar's generated mesh for the target renderer. | All three show the same geometry, skinning, blend shapes, and materials. After the build, no decoded mesh asset appears anywhere in the project, and the generated avatar contains only the assembled mesh. | |
+| 14.10 | The overlays follow the pose they draw on | Pose the rig (rotate or move a bone, and scale a bone or the renderer), leave every blend-shape weight at zero, and turn on the candidate and merge-check overlays; then do the same on a protected part whose payload carries a blend shape, and finally scale or move the renderer itself without touching a bone. | The discs sit on the drawn surface instead of the bind pose, and the Scene View label says the preview is the current pose while the seam data stays rest-pose. Moving a bone changes where the discs are drawn but never the matched/unmatched classification or the generated pairing. Scaling the renderer alone leaves the discs on the mesh too, because the cache re-solves for the renderer's own space. A protected part's renderer keeps its empty `Mesh` field, the Console reports no error from the overlay repaint even though the decoded mesh declares blend shapes, and a repaint that changes no bone, no weight, and no transform does not re-bake. | |
+
+---
+
+## 14. Acceptance summary
 
 Fill this in when every group has been run. A group with any `fail` is not accepted.
 
@@ -300,6 +322,7 @@ Fill this in when every group has been run. A group with any `fail` is not accep
 | 10. Language | 7 | | | |
 | 11. Texture mask | 9 | | | |
 | 12. Armature / seam (M10, plus the M11 body-authority row 12.11) | 11 | | | |
+| 13. Protected part mesh mode | 9 | | | |
 
 Verdict: ☐ accepted as release candidate ☐ accepted with recorded exceptions
 ☐ not accepted

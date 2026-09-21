@@ -74,6 +74,26 @@ namespace AvatarPartAssembler.Editor.Ndmf
             var avatarRoot = context.AvatarRootObject;
             if (avatarRoot == null) return;
 
+            var artifacts = ApaTransientArtifacts.For(context);
+
+            // The release is a finally, not a success-path step. A protected part's transient mesh exists only so
+            // Modular Avatar and this pass's capture can read the geometry, and every path out of this pass --
+            // a blocked build, a failed assembly, a successful write -- must leave nothing attached. NDMF
+            // serializes the avatar after this phase, so a mesh still attached here would be written into the
+            // project as a real mesh asset, which is exactly the leak the protected path exists to prevent. The
+            // Optimizing-phase cleanup pass is the second line of defence for a build that never reaches this one.
+            try
+            {
+                ExecuteCore(context, avatarRoot, artifacts);
+            }
+            finally
+            {
+                artifacts.ReleaseProtectedMeshLeases();
+            }
+        }
+
+        private void ExecuteCore(BuildContext context, GameObject avatarRoot, ApaTransientArtifacts artifacts)
+        {
             // The report is the gate: an error reported earlier (a merge target that could not be derived, a
             // Modular Avatar failure, anything else) has already blocked the upload, and mutating the clone
             // anyway would only produce a second, misleading failure.
@@ -88,8 +108,6 @@ namespace AvatarPartAssembler.Editor.Ndmf
             // still there was never merged, and assembling anyway would ship bones that are not part of the
             // avatar's armature. Refusing here keeps "the configuration was applied" a checked property rather
             // than an assumption; see ApaTransientArtifacts.
-            var artifacts = ApaTransientArtifacts.For(context);
-
             // An empty record means two different things, and only one of them is a pass. "This pass's
             // predecessor ran and no part needed a configuration" has nothing left to verify; "the Generating
             // pass never ran" means no part's bones were merged at all, and the empty postcondition list below

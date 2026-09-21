@@ -89,9 +89,9 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// <b>Three overlays with explicit precedence.</b> Which layers a repaint draws is decided by
     /// <see cref="ApaOverlayVisibility"/>, one pure function, so the gating is testable without a Scene View. The
     /// red removal overlay is drawn only while the window's toggle is on — it is off by default. The green
-    /// candidate overlay marks the part vertices the configured vertex color selects, and is drawn from the
-    /// <i>rest-pose</i> arrays because those are the indices and positions seam generation reads; the target side
-    /// is spatial and is not drawn by it, because "every body vertex" is not a set worth painting. The merge-check
+    /// candidate overlay marks the part vertices the configured vertex color selects; the indices are the ones
+    /// seam generation reads, and the positions are the renderer's current ones. The target side is spatial and is
+    /// not drawn by it, because "every body vertex" is not a set worth painting. The merge-check
     /// mode is a separate toggle that hides the removal, candidate, and stored-seam overlays and draws the
     /// prospective pairing instead: matched candidates in green, unmatched <i>part</i> candidates in red. It never
     /// writes the stored seam or any profile data, and leaving the mode restores exactly the toggles that were set
@@ -102,19 +102,24 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// top toolbar, so an enabled layer cannot be silently swallowed by a second control elsewhere in the window.
     /// </para>
     /// <para>
-    /// <b>Cost.</b> Every read of a drawn mesh goes through one <see cref="ApaMeshArrayCache"/>, so a repaint does
-    /// not re-allocate the vertex and index arrays. The merge-check pairing reuses <see cref="ApaSeamWorldMatcher"/>
+    /// <b>Cost.</b> Every read of a drawn mesh goes through one <see cref="ApaMeshArrayCache"/> (the triangle
+    /// indices) and one <see cref="ApaPreviewPositionCache"/> (the positions), so a repaint does not re-allocate
+    /// the arrays, and the positions are re-solved only when a pose, a weight, a mesh, or the renderer's own
+    /// transform actually changed. The
+    /// merge-check pairing reuses <see cref="ApaSeamWorldMatcher"/>
     /// and is cached per mesh, transform, candidate set, and tolerance, so a repaint does not re-run the matcher —
     /// and it is keyed on the resolved candidate results rather than on the raw color, so committing a new color
     /// code cannot make it recompute once per repaint while the window is deferring that same work.
     /// </para>
     /// <para>
-    /// <b>The removal overlay follows the drawn geometry.</b> When the target renderer deforms through blend
-    /// shapes, the red triangles read the renderer's current evaluated geometry
-    /// (<see cref="ApaPreviewPositionCache"/>: a cached <c>BakeMesh</c> result) instead of the mesh's rest-pose
-    /// vertices, so a highlight cannot sit beside the surface it describes. Nothing about the assembled mesh
-    /// changes: the removal <i>set</i> is still a set of triangle addresses, and seam generation, the candidate
-    /// overlay, the merge check, and every build-time decision still read the rest pose.
+    /// <b>Every overlay draws at the geometry the author sees.</b> The discs and triangles read the renderer's
+    /// current evaluated positions (<see cref="ApaPreviewPositionCache"/>: a cached <c>BakeMesh</c> result for a
+    /// live mesh, an in-memory skinned solve for a protected part's transient decode) instead of the mesh's
+    /// rest-pose vertices, so a highlight cannot sit beside the surface it describes when a bone is moved or a
+    /// blend shape is active. What the overlay <i>names</i> does not move with the pose: the removal set is still
+    /// a set of triangle addresses, the candidate indices, the merge-check classification, and the stored seam
+    /// pairs are still bind-pose data, and seam generation and every build-time decision still read the rest
+    /// pose. Position and identity are separated, and the label says so.
     /// </para>
     /// </remarks>
     public sealed class ApaAuthoringSceneTool
@@ -174,8 +179,8 @@ namespace AvatarPartAssembler.Editor.Authoring
         private readonly ApaMeshArrayCache _partArrays = new ApaMeshArrayCache();
 
         // The positions the overlay uses. Each delegates its rest-pose half to the array cache of its own role, so
-        // one mesh still has one vertex array; the evaluated half is a cached BakeMesh result that only exists
-        // while the renderer actually deforms through blend shapes.
+        // one mesh still has one vertex array; the evaluated half is cached and exists whenever the renderer is
+        // skinned — a bake for a live mesh, an in-memory solve for a protected part's transient decode.
         private readonly ApaPreviewPositionCache _targetPreview;
         private readonly ApaPreviewPositionCache _partPreview;
 
@@ -188,6 +193,9 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         /// <summary>True when this repaint drew the target overlay from evaluated geometry, for the label.</summary>
         private bool _targetPreviewIsEvaluated;
+
+        /// <summary>True when this repaint drew the part overlay from evaluated geometry, for the label.</summary>
+        private bool _partPreviewIsEvaluated;
 
         // The merge-check cache. The prospective pairing runs ApaSeamWorldMatcher over both candidate policies,
         // which reads both vertex arrays and allocates a spatial hash: doing that on every Scene View repaint would
@@ -289,6 +297,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                 // authoring overlay, so it must remain visible from every angle and on top of the source geometry.
                 Handles.zTest = CompareFunction.Always;
                 _targetPreviewIsEvaluated = false;
+                _partPreviewIsEvaluated = false;
 
                 if (plan.DrawsAnyLayer)
                 {
@@ -327,6 +336,22 @@ namespace AvatarPartAssembler.Editor.Authoring
                 var camera = sceneView != null ? sceneView.camera : null;
                 return camera != null ? -camera.transform.forward : Vector3.forward;
             }
+        }
+
+        /// <summary>
+        /// Records which side of this repaint read evaluated positions, so the status label can say so.
+        /// </summary>
+        /// <remarks>
+        /// The note exists because the two halves of an overlay are deliberately different: what a disc
+        /// <i>names</i> is bind-pose data, and where it is <i>drawn</i> is the current pose. Without the note,
+        /// "the discs moved when I dragged a bone" reads as "the seam I generated changed".
+        /// </remarks>
+        private void SetEvaluatedFlag(bool isPartMesh, ApaPreviewPositionSource source)
+        {
+            if (source != ApaPreviewPositionSource.Evaluated) return;
+
+            if (isPartMesh) _partPreviewIsEvaluated = true;
+            else _targetPreviewIsEvaluated = true;
         }
 
         /// <summary>
@@ -371,7 +396,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (!_targetArrays.TryRead(mesh, out _, out var triangleIndices)) return;
 
             if (!_targetPreview.TryRead(renderer, mesh, out var vertices, out var source)) return;
-            _targetPreviewIsEvaluated = source == ApaPreviewPositionSource.Evaluated;
+            SetEvaluatedFlag(false, source);
 
             var localToWorld = renderer.transform.localToWorldMatrix;
             var drawn = 0;
@@ -405,10 +430,10 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <remarks>
         /// <para>
         /// Green discs mark every part candidate, so the author can confirm that the paint they applied in the
-        /// modelling tool is the set the generator will pair. The indices and the positions come from the same
-        /// rest-pose arrays seam generation reads (<c>mesh.vertices</c> through
-        /// <see cref="ApaMeshArrayCache"/>), transformed by each renderer's own <c>localToWorldMatrix</c>: the
-        /// overlay is a preview of the pairing input, never of a posed bake.
+        /// modelling tool is the set the generator will pair. The <i>indices</i> are the resolved candidate list —
+        /// the bind-pose set seam generation reads — while the <i>positions</i> come from the renderer's current
+        /// evaluated geometry, so a candidate vertex is drawn where the author can see it rather than where it sat
+        /// in the rest pose. A moved bone therefore moves the disc, never the pairing.
         /// </para>
         /// <para>
         /// <b>The target side draws nothing here.</b> Its candidate set is spatial — every body vertex — so
@@ -432,7 +457,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             DrawCandidateSide(
                 selection.PartRenderer,
-                selection.PartMesh,
+                selection.PartGeometryMesh,
                 host.PartSeamCandidates,
                 true);
         }
@@ -446,8 +471,12 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (renderer == null || mesh == null || !mesh.isReadable) return;
             if (candidates == null || !candidates.Succeeded) return;
 
-            var arrays = isPartMesh ? _partArrays : _targetArrays;
-            if (!arrays.TryRead(mesh, out var vertices, out _)) return;
+            // The candidate indices are bind-pose data; the positions they are drawn at are the ones the renderer
+            // currently draws. For a protected part the geometry is the transient decode and the evaluated half is
+            // solved in memory, which is why this is the same cache the removal and seam overlays read.
+            var preview = isPartMesh ? _partPreview : _targetPreview;
+            if (!preview.TryRead(renderer, mesh, out var vertices, out var source)) return;
+            SetEvaluatedFlag(isPartMesh, source);
 
             var indices = candidates.Indices;
             var localToWorld = renderer.transform.localToWorldMatrix;
@@ -477,8 +506,11 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// action would write. Nothing here mutates the stored seam or the draft.
         /// </para>
         /// <para>
-        /// Both sides are drawn from the rest-pose arrays, for the same reason the candidate overlay is: the
-        /// question the mode answers is about the pairing input, and the matcher reads the bind geometry.
+        /// <b>Classification and position come from different places, deliberately.</b> Which vertex is matched
+        /// is decided on the bind pose by the matcher — a pairing derived from a posed body would change the
+        /// moment the author moved a bone, and the seam that gets written would change with it. Where that vertex
+        /// is drawn is the renderer's current evaluated position, so the discs sit on the surface the author is
+        /// looking at. Moving a bone therefore repaints the discs and leaves the classification exactly as it was.
         /// </para>
         /// <para>
         /// <b>Red means "a part candidate with no counterpart".</b> The target side is spatial, so its unclaimed
@@ -500,7 +532,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             DrawMergeCheckSide(
                 selection.PartRenderer,
-                selection.PartMesh,
+                selection.PartGeometryMesh,
                 result.MatchedPartIndices,
                 result.UnmatchedPartIndices,
                 true);
@@ -515,8 +547,11 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             if (renderer == null || mesh == null || !mesh.isReadable) return;
 
-            var arrays = isPartMesh ? _partArrays : _targetArrays;
-            if (!arrays.TryRead(mesh, out var vertices, out _)) return;
+            // The two index lists are the matcher's bind-pose classification; the array they index is the
+            // renderer's current evaluated geometry, shared with the candidate, seam, and removal overlays.
+            var preview = isPartMesh ? _partPreview : _targetPreview;
+            if (!preview.TryRead(renderer, mesh, out var vertices, out var source)) return;
+            SetEvaluatedFlag(isPartMesh, source);
 
             var localToWorld = renderer.transform.localToWorldMatrix;
             var drawn = 0;
@@ -574,7 +609,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             var targetRenderer = selection.TargetRenderer;
             var partRenderer = selection.PartRenderer;
             var targetMesh = selection.TargetMesh;
-            var partMesh = selection.PartMesh;
+            var partMesh = selection.PartGeometryMesh;
 
             if (targetRenderer == null || partRenderer == null || targetMesh == null || partMesh == null)
             {
@@ -672,8 +707,8 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// handle count for no extra information at this scale.
         /// </para>
         /// <para>
-        /// The discs mark <i>vertices</i>, so they are drawn on the geometry the author sees: evaluated positions
-        /// when the renderer deforms through blend shapes, the rest pose otherwise. The pairs themselves remain
+        /// The discs mark <i>vertices</i>, so they are drawn on the geometry the author sees: the renderer's
+        /// current evaluated positions when it is skinned, the rest pose otherwise. The pairs themselves remain
         /// rest-pose data — a disc that follows the pose still marks the vertex the pair names.
         /// </para>
         /// </remarks>
@@ -691,7 +726,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             DrawSeamSide(
                 selection.PartRenderer,
-                selection.PartMesh,
+                selection.PartGeometryMesh,
                 seam.GetPartIndices(),
                 PartSeamColor,
                 true);
@@ -710,7 +745,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             var preview = isPartMesh ? _partPreview : _targetPreview;
             if (!preview.TryRead(renderer, mesh, out var vertices, out var source)) return;
 
-            if (!isPartMesh) _targetPreviewIsEvaluated = source == ApaPreviewPositionSource.Evaluated;
+            SetEvaluatedFlag(isPartMesh, source);
 
             var localToWorld = renderer.transform.localToWorldMatrix;
             Handles.color = color;
@@ -768,12 +803,18 @@ namespace AvatarPartAssembler.Editor.Authoring
                 text += TrFormat("\nshowing the first {0} removed triangles", MaxDrawnTriangles);
             }
 
-            // The removal overlay follows the drawn geometry, but the seam pairs, the candidate indices, and the
-            // removal addresses are rest-pose data. Saying so on screen is what keeps "the red triangles moved
-            // with the pose" from reading as "the generated seam changed".
-            if (_targetPreviewIsEvaluated && plan.Removal && !plan.MergeCheck)
+            // The overlays follow the drawn geometry, but the seam pairs, the candidate indices, the merge-check
+            // classification, and the removal addresses are rest-pose data. Saying so on screen is what keeps
+            // "the discs moved with the pose" from reading as "the generated seam changed".
+            if ((plan.Removal || plan.Candidates) && !plan.MergeCheck
+                && (_targetPreviewIsEvaluated || _partPreviewIsEvaluated))
             {
-                text += Tr("\npreview: current blend-shape pose; seam data stays rest-pose");
+                text += Tr("\npreview: current skinned pose; seam data stays rest-pose");
+            }
+
+            if (plan.MergeCheck && (_targetPreviewIsEvaluated || _partPreviewIsEvaluated))
+            {
+                text += Tr("\npreview: current skinned pose; matched/unmatched indices stay rest-pose");
             }
 
             Handles.Label(anchor, new GUIContent(text), StatusStyle);

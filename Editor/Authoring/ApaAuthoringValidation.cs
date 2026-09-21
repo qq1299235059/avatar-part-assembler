@@ -468,11 +468,16 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// Captures a part mesh snapshot for the draft-level checks, or returns null. A mesh that cannot be read
         /// is reported by the selection check, so this returns null rather than adding a second diagnostic.
         /// </summary>
+        /// <remarks>
+        /// The geometry read here is <see cref="ApaAuthoringSelection.PartGeometryMesh"/>: the live part mesh, or
+        /// the transient mesh decoded from a protected payload. Both carry the same attributes, so a draft
+        /// validated against a protected part is validated against the geometry the build will assemble.
+        /// </remarks>
         private static MeshSnapshot CapturePartMesh(ApaAuthoringSelection selection)
         {
             if (selection == null) return null;
 
-            var mesh = selection.PartMesh;
+            var mesh = selection.PartGeometryMesh;
             if (mesh == null || !mesh.isReadable) return null;
 
             return MeshSnapshotFactory.Capture(mesh, null, out _);

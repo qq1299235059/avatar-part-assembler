@@ -630,6 +630,51 @@ namespace AvatarPartAssembler
         /// </remarks>
         public const string SeamCandidateColorInvalid = "APA052";
 
+        /// <summary>
+        /// A protected part-mesh payload could not be authenticated, decoded, or verified, so no geometry was used.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>One code, one remedy, one stable reason token.</b> The protected payload is a binary envelope with a
+        /// version, a codec identifier, a salt, an IV, a ciphertext, and an authentication tag, and every way it can
+        /// fail has the same remedy: recreate the protected part prefab from the source mesh, or restore the asset
+        /// from version control. The failing condition is therefore carried by a stable <c>reason=…</c> token in the
+        /// detail (<c>protected-mesh-missing</c>, <c>unsupported-format-version</c>, <c>unsupported-codec</c>,
+        /// <c>incomplete-envelope</c>, <c>invalid-length</c>, <c>authentication-failed</c>, <c>invalid-padding</c>,
+        /// <c>plaintext-length-mismatch</c>, <c>bad-magic</c>, <c>unsupported-payload-version</c>,
+        /// <c>length-limit-exceeded</c>, <c>count-mismatch</c>, <c>truncated-payload</c>, <c>trailing-garbage</c>,
+        /// <c>index-out-of-range</c>, <c>invalid-topology</c>, <c>invalid-index-format</c>, <c>malformed-string</c>,
+        /// <c>empty-payload</c>, and <c>part-id-mismatch</c>) rather than by a code per condition, exactly like the
+        /// vertex-color candidate contract's <c>APA052</c>.
+        /// </para>
+        /// <para>
+        /// <b>It is always blocking and never falls back.</b> A payload that fails this check produces no snapshot:
+        /// the part is not assembled from a stale mesh, from the null renderer's geometry, or from every vertex.
+        /// A payload whose content is intact but whose mesh no longer matches the profile is <i>not</i> this code —
+        /// that is <see cref="ProfileMeshFingerprintMismatch"/> (<c>APA048</c>), which names the one action that
+        /// fixes it (recapture the profile after an intentional mesh change).
+        /// </para>
+        /// <para>Allocated by M15 above the M14 range.</para>
+        /// </remarks>
+        public const string ProtectedMeshInvalid = "APA053";
+
+        /// <summary>
+        /// A protected part prefab would still depend on the source mesh or its model file, so it was not written.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Emitted by the authoring layer only, by the protected prefab creation path. Clearing the part
+        /// renderer's mesh reference is not enough on its own: another component — a collider, a second renderer, an
+        /// avatar asset imported from the same <c>.fbx</c> — can keep the source file in the prefab's dependency
+        /// graph, and publishing that prefab would ship the very asset the protection exists to withhold. The
+        /// condition is carried by a stable <c>reason=…</c> token (<c>source-mesh-reference</c> for a component
+        /// reference found before the save, <c>source-mesh-dependency</c> for a dependency found in the saved
+        /// asset), and the diagnostic names the component, the property, and the asset path that must be removed.
+        /// </para>
+        /// <para>Allocated by M15 above the M14 range.</para>
+        /// </remarks>
+        public const string ProtectedMeshSourceLeak = "APA054";
+
         /// <summary>An unexpected exception escaped the assembler. Always accompanied by the exception detail.</summary>
         public const string InternalError = "APA999";
         /// <summary>
@@ -692,6 +737,8 @@ namespace AvatarPartAssembler
                 case SeamWeightBoneNotInTarget: return "SEAM_WEIGHT_BONE_NOT_IN_TARGET";
                 case MergeVertexGroupInvalid: return "MERGE_VERTEX_GROUP_INVALID";
                 case SeamCandidateColorInvalid: return "SEAM_CANDIDATE_COLOR_INVALID";
+                case ProtectedMeshInvalid: return "PROTECTED_MESH_INVALID";
+                case ProtectedMeshSourceLeak: return "PROTECTED_MESH_SOURCE_LEAK";
                 case InternalError: return "INTERNAL_ERROR";
                 default: return string.Empty;
             }
@@ -880,6 +927,22 @@ namespace AvatarPartAssembler
         public static readonly string[] Milestone14 =
         {
             ApaErrorCode.SeamCandidateColorInvalid
+        };
+
+        /// <summary>
+        /// Codes allocated by M15: the protected part-mesh payload and its distribution-leak refusal.
+        /// </summary>
+        /// <remarks>
+        /// Kept as its own allocation record for the same reason as the earlier arrays: a later milestone reads
+        /// which milestone introduced a code, and a milestone that adds codes never renumbers an existing one.
+        /// <c>APA053</c> carries every payload failure behind a <c>reason=…</c> token, because all of them share
+        /// one remedy; <c>APA054</c> is the authoring-layer refusal that stops a protected prefab from being
+        /// published while it still depends on the source mesh or its model file.
+        /// </remarks>
+        public static readonly string[] Milestone15 =
+        {
+            ApaErrorCode.ProtectedMeshInvalid,
+            ApaErrorCode.ProtectedMeshSourceLeak
         };
 
         /// <summary>Returns true when the code was allocated for the M12 safety work.</summary>

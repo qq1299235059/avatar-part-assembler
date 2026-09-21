@@ -294,7 +294,9 @@ Open `Tools > Avatar Part Assembler > Part Authoring`. The window guides the flo
    the mesh does not actually have.
 8. **Material semantics** — declare `(semantic name → source submesh → material →
    policy)` rows. `Infer From Materials` fills the rows. The material *asset name* is
-   never used as the semantic.
+   never used as the semantic. The material field is the authoring default: the build
+   reads the part renderer's own `sharedMaterials[source submesh]` and falls back to this
+   asset only when the renderer has no material there.
 9. **Bones and blend shapes** — set `Merge Armature` (a transient Modular Avatar merge
    configuration generated on the selected part armature and targeting the selected target
    armature, written with no prefix, no suffix, and no inference) and `Allow Part Only
@@ -547,8 +549,10 @@ part candidates, while Merge Check temporarily hides the ordinary overlays and s
  part vertices in green and unmatched part candidates in red without writing the profile. The candidate value is
 entered as a strict `#RRGGBB` code (optionally `#RRGGBBAA`), so malformed text keeps the previous valid value
 without touching mesh caches. The red removal overlay is off by default and is controlled by its own toggle; when
-enabled, it is a read-only visualization of the mask result using a cached `SkinnedMeshRenderer.BakeMesh` result
-while blend-shape weights are active. Reopening the authoring window or loading a profile restores both armature
+enabled, it is a read-only visualization of the mask result drawn at the renderer's current evaluated positions —
+a cached `SkinnedMeshRenderer.BakeMesh` result, used whenever the renderer is skinned rather than only while a
+blend-shape weight is active, and an in-memory skinned solve for a protected part whose renderer holds no mesh.
+Reopening the authoring window or loading a profile restores both armature
 object fields from their recorded relative paths and clears derived state.
 
 Equality is never used for floats: the generator compares squared world distances against
@@ -785,6 +789,15 @@ The base renderer's own materials are **never** mutated or replaced; they are
 referenced, and the final slot list is attached to the generated mesh's renderer. A
 material asset name is never parsed, pattern-matched, or used as a semantic.
 
+Which asset a declared slot names is read from the **source renderer**, not from the
+profile: a row's `Semantic`, `SourceSubMesh`, and `Policy` come from the profile, while
+the material is `renderer.sharedMaterials[SourceSubMesh]`. Replacing the material on a
+part renderer — on a prefab instance or on the prefab asset — therefore changes what the
+preview, the assembly plan, and the NDMF build use, and the replacement is never written
+back into the profile. The profile's own material asset is the **creation default and
+missing-slot fallback**: it is used only when the renderer has no slot at that index, or
+that slot holds no material.
+
 ### Blend shapes
 
 | Situation | Result |
@@ -1002,6 +1015,138 @@ registration.
 
 ---
 
+## Protected part mesh payloads
+
+An author can publish a part so that the distributed prefab carries no mesh at all. The
+part mesh is serialized into an APA-owned asset beside the prefab as an authenticated,
+encrypted, versioned binary payload; the installer references that asset, and the saved
+prefab's part renderer is written with `sharedMesh == null`. Preview and build decode the
+payload in memory and assemble exactly the geometry the unprotected prefab would have
+assembled.
+
+### Format and guarantees
+
+| Property | Value |
+| --- | --- |
+| Envelope version | `ApaProtectedMeshAsset.CurrentFormatVersion` (`1`) |
+| Codec identifier | `aes-256-cbc-pkcs7+hmac-sha256+pbkdf2-sha256` |
+| Key derivation | PBKDF2-SHA256, 20 000 iterations, from a package-local secret + stable part id + per-asset 16-byte salt |
+| Confidentiality | AES-256-CBC with PKCS#7 padding, 16-byte per-asset IV |
+| Integrity | Encrypt-then-MAC, HMAC-SHA256 over the header (version, codec, part id, fingerprint, plaintext length) and the ciphertext, compared in constant time |
+| Bounds | Every count is checked against `ApaProtectedMeshLimits` **before** it drives an allocation, and against the bytes actually left in the stream |
+| Plaintext | A length-prefixed record carrying everything `MeshSnapshotFactory` reads: name, bounds, index format, vertices, normals, tangents, colors, UV0–UV7, per-submesh indices and topology, bone weights, bind poses, every blend shape with every frame's deltas, the recorded bone world-to-local matrices, and the bone paths |
+
+`MaxCiphertextBytes` is derived from `MaxPlaintextBytes` — the largest plaintext rounded
+up to the next AES block, which is exactly what PKCS#7 produces — so the reader can never
+refuse a payload this build itself wrote.
+
+The payload protects the **distribution format** and detects tampering. It is not an
+unextractable DRM boundary: the derivation secret ships inside the package, and a build
+that runs in the Editor can be observed while it runs. The creator guide says so in the
+same words.
+
+### Data flow
+
+1. `ApaPrefabGenerator.CreateFromScene` captures the source mesh through
+   `MeshSnapshotFactory` (the same reader the unprotected path uses), encrypts it with
+   `ApaProtectedMeshCodec.TryCreatePayload`, and plans the write **before** anything is
+   modified.
+2. On the loaded prefab copy it clears the part renderer's mesh reference, scans every
+   serialized reference for one that still points at the source mesh or its model file,
+   writes the payload with `ApaProtectedMeshAssetWriter`, and assigns
+   `AvatarInstaller.ProtectedMesh`.
+3. After the save it verifies on the written asset that the installer really carries the
+   payload, that the part renderer really has no mesh, and that
+   `AssetDatabase.GetDependencies` no longer lists the source mesh. Any failure rolls the
+   prefab and the payload back. The payload reference is proven as a Unity asset — the path
+   it resolves to, plus native object identity while the written instance is still alive —
+   so a save or reload that hands out a second wrapper for the same asset is accepted, while
+   a reference to a different payload, or to a transient instance that was never persisted,
+   fails closed.
+4. Preview and build resolve the payload through `ApaProtectedMeshCache`, keyed by the
+   payload's content identity (asset instance, format, codec, part id, fingerprint,
+   declared lengths, salt, IV, tag, and a cached revision of the ciphertext).
+5. The NDMF **Generating** phase runs `ApaProtectedMeshPass` *before*
+   `ApaMergeArmaturePass`: it rebuilds the geometry as a `HideAndDontSave` transient mesh,
+   attaches it through an `ApaProtectedMeshLease`, and records the lease in
+   `ApaTransientArtifacts`. Modular Avatar's armature merge then inspects the same weights
+   it would inspect for an ordinary part.
+6. `ApaAssemblyPass` releases every lease in a `finally`, and
+   `ApaProtectedMeshLeaseCleanupPass` runs in **Optimizing** as the safety net for a build
+   that never reached the assembly. The transient mesh therefore cannot be serialized into
+   the generated avatar.
+
+### Error rules
+
+| Condition | Diagnostic |
+| --- | --- |
+| Missing, truncated, tampered, wrong-part, unsupported version/codec, bad padding, trailing bytes, out-of-range counts | Blocking `APA053 PROTECTED_MESH_INVALID` with a stable `reason=` token (`protected-mesh-missing`, `authentication-failed`, `part-id-mismatch`, `unsupported-format-version`, `unsupported-codec`, `invalid-padding`, `truncated-payload`, `trailing-garbage`, …) |
+| The written prefab would still depend on the source mesh or its model file | Blocking `APA054 PROTECTED_MESH_SOURCE_LEAK` (`reason=source-mesh-reference` before the save, `reason=source-mesh-dependency` after it) |
+| An ordinary part renderer with no mesh and no payload | Blocking `APA006 TARGET_RENDERER_NOT_FOUND` with `reason=missing-part-mesh` and an actionable message |
+| Payload intact but no longer matching the profile | `APA048` (the profile fingerprint mismatch), not `APA053`: the remedy is to recapture the profile |
+
+The failure never falls back to the null renderer, to a stale mesh, or to every vertex.
+Failures are not cached, so a repaired payload works again without a domain reload, and a
+corrupt payload is not re-decrypted once per repaint.
+
+### Preview overlays and material refresh
+
+The authoring window reads the same payload: `ApaProtectedOverlayGeometry` decodes through
+the shared cache and reconstructs a transient mesh for the seam, merge-check, and
+UV/material inference overlays. That mesh is never assigned to a scene renderer, never
+saved, and destroyed when the window's derived state is invalidated or the window closes.
+An ordinary part's live mesh always wins, so the unprotected path is unchanged.
+
+Preview materials are resolved from live state rather than from the assembly-time snapshot:
+`ApaPreviewLiveMaterials` re-runs `MaterialResolver.CollectLiveSources` and
+`MaterialResolver.Resolve` over the current renderer `sharedMaterials` and the current
+profile declarations, keyed by a cheap token of the live material identities, and
+`ApaPreviewNode.OnFrame` applies that list every frame. No material is cloned, so editing
+a referenced asset is visible immediately. A declared slot's asset is read from the live
+renderer (`MaterialResolver.ResolveSlotMaterial`), so replacing a material on the part
+renderer is applied on the next frame and the same rule is what the assembly plan and the
+NDMF build use; the profile's own asset is only the fallback for a slot the renderer
+cannot name. A material-only change is detected by
+`ApaPreviewFingerprint.OfGeometryContext` — the full fingerprint without material
+identities or slot labels, plus the resolved slot structure — and reuses the cached
+geometry (and the decoded payload) instead of rebuilding it. A change that would reshape
+the layout, such as a contribution merging into another slot, changes the same fingerprint
+and rebuilds.
+
+The overlays draw where the renderer actually draws: `ApaPreviewPositionCache` supplies
+the candidate, merge-check, stored-seam, and removal overlays with the renderer's current
+evaluated positions — a cached `BakeMesh` for a live mesh, and `ApaPreviewSkinning`'s
+in-memory solve of the payload's bind poses and weights for a protected part whose
+renderer holds no mesh. A `SkinnedMeshRenderer` is evaluated even when every blend-shape
+weight is zero, because a moved bone is enough to separate the drawn geometry from the
+bind pose; the cache is keyed on the renderer's own transform, the pose, and the weights,
+so an unchanged repaint reuses the array — and a renderer moved or scaled on its own is
+re-solved, because the positions are local to it and the same world point has different
+coordinates under a different transform. Blend-shape weights are read only from a renderer
+that holds the mesh: a protected renderer holds none, so its key records the bone pose plus
+a "no weights" marker instead of a weight list, and the weight query — whose index Unity
+defines against the mesh attached to the renderer — is never made. What an overlay *names*
+does not move with the pose: candidate indices, the merge-check classification, the stored
+seam pairs, and removal addresses stay bind-pose data, and seam generation and the build
+still read the rest pose.
+
+### Verification
+
+The codec, the transient hydration, the prefab transaction, the protected context/preview/
+authoring acceptance paths, the fail-closed paths, and the live material refresh each have
+focused EditMode tests under `Tests/Editor/Protected*.cs`. The material-slot precedence
+rule, the pose-keyed evaluated-position cache, the merge-check classification/display
+separation, and the protected pose solver are covered in
+`Tests/Editor/MaterialResolutionTests.cs`, `Tests/Editor/AuthoringPreviewGeometryTests.cs`,
+and `Tests/Editor/AuthoringMergeCheckOverlayTests.cs`. The NDMF ordering and the lease
+release are pinned by source-contract tests beside them, because the ordering exists only
+inside the plugin's `Configure` method. The payload-reference identity rule has both: the
+predicate and its reload/refusal cases are tested directly
+(`ApaAssetDatabaseUtility.IsSameAssetAtPath`), and the generator is pinned to it by a
+source-contract test so the check cannot regress to managed wrapper identity.
+
+---
+
 ## Installed NDMF and Modular Avatar API attribution
 
 This package links against, but does not redistribute, the following packages. They are
@@ -1148,6 +1293,7 @@ APA018 INVALID_SEAM_SELECTION            APA040 PART_ONLY_SHAPE_DISALLOWED
 APA019 DUPLICATE_SEMANTIC                APA999 INTERNAL_ERROR
 APA020 INVALID_SEMANTIC_NAME             APA042 SEAM_PAIRING_REQUIRED
 APA043 ARMATURE_SELECTION_INVALID        APA044 BONE_OUTSIDE_SELECTED_ARMATURE
+APA053 PROTECTED_MESH_INVALID            APA054 PROTECTED_MESH_SOURCE_LEAK
 ```
 
 ### Authoring-layer codes (same table, emitted by `Editor/Authoring/**`)
@@ -1258,13 +1404,14 @@ authoring action, but it is reported so it cannot look installed.
 | Check | Where it ran | Result |
 | --- | --- | --- |
 | Offline static compile of Runtime, Editor, NDMF, Preview, Authoring, and Tests against Unity's own Roslyn compiler and reference assemblies | run folders under `work/.../runs/**` | Reviewed as clean by the milestone runs; re-run at M8 for all five assemblies and at M9 for the touched assemblies, exit 0 each |
+| Offline static compile of the protected-mesh work (all five assemblies, including the new `Editor/Protected/**`, `Editor/Preview/PreviewLiveMaterials.cs`, and the four `Tests/Editor/Protected*.cs` files) using the exact `-define`, `-reference`, `-langversion`, and analyzer arguments Unity's Bee build system recorded for this project | `work/deepseek-harness/protected-part-mesh/runs/m1-fix-3` | Exit 0 for every assembly; no `error CS` |
 | Offline localization parity check (`work/.../runs/12-m9-review-fixes/localization-check.ps1`): every English literal passed through the layer has a Chinese entry, no entry is unreferenced, and every entry keeps its English key's format placeholders | M8, re-run at M9 and again after the M9 review fixes | 337 string entries at M8; 364 entries at M9; 368 entries after the review fixes added the apply-mode labels and the repaired status lines, 368 localized literals, 0 missing, 0 unreferenced, 0 placeholder mismatches |
 | Offline M9 source contracts (`work/.../runs/12-m9-review-fixes/staticcheck/SourceChecks.ps1`, the repaired successor of the run 11 script): the APA041 allocation record, the failure enum's unique values, "the mask is window state and no Runtime type references it", the fixed 7-sample rule as written in the source (including the allocation-free triangle evaluation and the wrap-mode texel addressing), no inline English label in the window, the localized Apply Mode popup, the single exception-safe readback path with no `CopyTexture`, and the documentation's statements | M9 review fixes | 142 of 142 checks passed |
 | Executable harnesses over the pure core (validation, planning, bone table, weight remap, bind poses, policies, path policy, removal mask, seam selection, diagnostics) | same | Passing at the time of each milestone |
 | Meta/GUID audit of the package | M5 review | No orphan meta, no duplicate GUID |
 | Attribute audit (one `[CustomEditor]`, one `[CreateAssetMenu]`, and `[MenuItem]` entries) | M5 review; re-stated by M8 | Exactly one of each. M8 adds a **second** `[MenuItem]` on purpose — the Chinese menu alias `Tools/部件装配器/部件编辑` beside the documented English path — and both attributes call the same `Open()` method, so the window still has one implementation |
-| Unity Editor compilation | **never run** | — |
-| Unity Test Runner / EditMode suite | **never run** | — |
+| Unity Editor compilation | **never run from this session** | The project is open in a running Editor that stopped refreshing its asset database (its last import was before the changes) and cannot be brought to the foreground from a non-interactive session; starting a second Editor on the same project is refused by the project lock, and a standalone batch-mode Editor in a temporary project aborts at licensing (`IPC channel to LicensingClient doesn't exist`, return code 199) because the sandbox forbids the named pipe its licensing client needs — the wider-access escalation that would lift that is unavailable (no approval channel). The offline compile above is the substitute, not the equivalent |
+| Unity Test Runner / EditMode suite | **never run from this session** | Same limitation; the suite is written and compiles, but executing it needs a live Editor |
 | NDMF build, Scene View preview | **never run** | — |
 | VRChat upload | **never run** | — |
 
@@ -1327,6 +1474,13 @@ is the one in the sources you are running. Compare the executed count with the n
     path follows the body's Transform in preview and in the build, the redirect is one Info
     summary per part, a duplicated body path a part weights blocks with `APA008`, and an
     unreferenced duplicated slot still blocks nothing.
+14. **Protected part mesh mode (0.5.0)** — protected creation writes the payload beside the
+    prefab and clears the renderer's mesh, a protected prefab is not misreported as a
+    mesh-less part in preview or build, a missing or tampered payload fails closed with
+    `APA053`, an ordinary mesh-less part still reports `APA006 reason=missing-part-mesh`,
+    the overlays draw the decoded geometry, a source-mesh leak is refused with `APA054`,
+    material swaps and asset edits reach the preview, and preview, play mode, and build
+    agree. Checklist group 13.
 
 Do not skip group 4's row "preview result equals build result". It is the product's
 core promise, and it is the one property no amount of source review can prove.

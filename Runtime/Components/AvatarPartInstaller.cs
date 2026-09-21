@@ -24,6 +24,7 @@ namespace AvatarPartAssembler
         [SerializeField] private ApaPartProfile _profile;
         [SerializeField] private GameObject _partRoot;
         [SerializeField] private GameObject _targetRendererObject;
+        [SerializeField] private ApaProtectedMeshAsset _protectedMesh;
         [SerializeField] private bool _enabledForBuild = true;
         [SerializeField] private bool _followAvatarBones = true;
         [SerializeField] private bool _includeScale = true;
@@ -56,6 +57,46 @@ namespace AvatarPartAssembler
             get => _targetRendererObject;
             set => _targetRendererObject = value;
         }
+
+        /// <summary>
+        /// The protected mesh payload that stands in for the part renderer's mesh, or null for an ordinary part.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Optional, and off by default.</b> A prefab created by the Part Authoring window in protected mode
+        /// carries this reference and saves its part renderer with <i>no</i> mesh, so the distributed prefab has no
+        /// dependency on the source mesh or its <c>.fbx</c>. Preview and build decode the payload in memory and
+        /// assemble exactly the geometry the unprotected prefab would have assembled. An ordinary prefab leaves
+        /// this null and every existing code path is unchanged.
+        /// </para>
+        /// <para>
+        /// <b>It is a distribution reference, not scene state.</b> The asset is a project asset published beside
+        /// the prefab; it must be delivered with the prefab, because a prefab whose payload is missing cannot be
+        /// assembled and is refused with a blocking diagnostic rather than silently installing nothing.
+        /// </para>
+        /// <para>
+        /// <b>Runtime-only data.</b> The property exposes the serialized reference and nothing else: decoding,
+        /// validation, and transient hydration all live in the Editor assembly, so the Runtime assembly keeps its
+        /// no-UnityEditor guarantee.
+        /// </para>
+        /// </remarks>
+        public ApaProtectedMeshAsset ProtectedMesh
+        {
+            get => _protectedMesh;
+            set => _protectedMesh = value;
+        }
+
+        /// <summary>
+        /// True when this installer expects its part geometry to come from a protected payload rather than from a
+        /// serialized mesh reference.
+        /// </summary>
+        /// <remarks>
+        /// The single predicate every consumer uses, so preview, build, and validation cannot disagree about which
+        /// parts are protected. It says nothing about whether the payload is present or readable: an installer
+        /// whose reference was lost still reports true and is refused with a precise diagnostic, which is the
+        /// fail-closed direction.
+        /// </remarks>
+        public bool HasProtectedMesh => _protectedMesh != null;
 
         /// <summary>
         /// When false, this installer is skipped entirely and contributes nothing to the plan. Used by authors

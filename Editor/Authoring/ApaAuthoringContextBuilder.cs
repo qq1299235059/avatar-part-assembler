@@ -157,7 +157,14 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (baseSnapshot == null) return new ApaAuthoringContextResult(null, ValidationResult.Build(issues));
 
             var partSnapshot = CapturePart(
-                avatarRoot, targetRenderer, partRenderer, partArmature, profile, policy, issues);
+                avatarRoot,
+                targetRenderer,
+                partRenderer,
+                partArmature,
+                profile,
+                policy,
+                selection.PartMesh == null ? selection.ProtectedData : null,
+                issues);
             if (partSnapshot == null) return new ApaAuthoringContextResult(null, ValidationResult.Build(issues));
 
             var context = new ValidationContext(
@@ -207,7 +214,12 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (selection.AvatarRoot == null) return false;
             if (selection.TargetRenderer == null || selection.TargetMesh == null) return false;
             if (!selection.TargetMesh.isReadable) return false;
-            if (selection.PartRenderer == null || selection.PartMesh == null) return false;
+            if (selection.PartRenderer == null) return false;
+
+            // A protected part has no live mesh by construction. Its payload is the geometry, and it is read
+            // through the same decode cache the build uses; a payload that cannot be used leaves the context
+            // unbuilt, exactly as an unreadable mesh does, and the selection check has already reported why.
+            if (selection.PartMesh == null) return selection.PartGeometryMesh != null;
             if (!selection.PartMesh.isReadable) return false;
 
             return true;
@@ -273,10 +285,11 @@ namespace AvatarPartAssembler.Editor.Authoring
             Transform partArmature,
             ApaPartProfile profile,
             ApaNumericPolicy policy,
+            ApaProtectedMeshData protectedData,
             List<ValidationIssue> issues)
         {
             var mesh = ApaCompatibilityCapture.ResolveMesh(partRenderer);
-            if (mesh == null) return null;
+            if (mesh == null && protectedData == null) return null;
 
             var partId = profile.Identity != null ? profile.Identity.PartId ?? string.Empty : string.Empty;
 
@@ -284,12 +297,26 @@ namespace AvatarPartAssembler.Editor.Authoring
             // relative path one joint.
             var partBoneSignature = MeshSnapshotFactory.CaptureBoneSignature(partArmature, partRenderer);
 
-            var snapshot = MeshSnapshotFactory.Capture(
-                mesh,
-                partBoneSignature.Paths,
-                out var captureIssues,
-                MeshSnapshotFactory.CaptureBoneWorldToLocalMatrices(partRenderer));
-            issues.AddRange(captureIssues);
+            MeshSnapshot snapshot;
+            if (protectedData != null)
+            {
+                // The payload is the geometry, and the bone identity is the live one, exactly as the unprotected
+                // capture records it. Decoding straight to a snapshot would have made the payload's authoring-time
+                // bone paths authoritative; passing the live paths keeps both paths identical.
+                snapshot = protectedData.CreateSnapshot(
+                    partBoneSignature.Paths,
+                    MeshSnapshotFactory.CaptureBoneWorldToLocalMatrices(partRenderer));
+            }
+            else
+            {
+                snapshot = MeshSnapshotFactory.Capture(
+                    mesh,
+                    partBoneSignature.Paths,
+                    out var captureIssues,
+                    MeshSnapshotFactory.CaptureBoneWorldToLocalMatrices(partRenderer));
+                issues.AddRange(captureIssues);
+            }
+
             if (snapshot == null) return null;
 
             ApaArmatureScope.ValidateWeightedBoneScopes(

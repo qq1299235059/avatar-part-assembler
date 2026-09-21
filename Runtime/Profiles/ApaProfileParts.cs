@@ -141,7 +141,16 @@ namespace AvatarPartAssembler
             set => _sourceSubMesh = value;
         }
 
-        /// <summary>The material asset referenced by this slot. Never mutated by the assembler.</summary>
+        /// <summary>
+        /// The authoring default material for this slot. Never mutated by the assembler.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is the creation default and the missing-slot fallback, not the final word.</b> The build reads
+        /// the material from the source renderer's own <c>sharedMaterials[SourceSubMesh]</c> and uses this asset
+        /// only when the renderer has no material in that slot. An installer who replaces the material on the part
+        /// renderer's slot — on a prefab instance or on the prefab asset — therefore changes what the build and the
+        /// preview use, and that replacement is never written back into this profile.
+        /// </remarks>
         public Material Material
         {
             get => _material;

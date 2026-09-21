@@ -49,6 +49,7 @@ namespace AvatarPartAssembler.Editor.Ndmf
         private readonly List<string> _partIds = new List<string>();
         private readonly List<Transform> _partTopBones = new List<Transform>();
         private readonly List<ApaRendererReplacement> _rendererReplacements = new List<ApaRendererReplacement>();
+        private readonly List<ApaProtectedMeshLease> _protectedMeshLeases = new List<ApaProtectedMeshLease>();
 
         /// <summary>
         /// True once the Generating pass has run far enough to declare that it configured this build, whether or
@@ -116,6 +117,54 @@ namespace AvatarPartAssembler.Editor.Ndmf
         /// </para>
         /// </remarks>
         internal IReadOnlyList<ApaRendererReplacement> RendererReplacements => _rendererReplacements;
+
+        /// <summary>
+        /// Number of protected-mesh leases this build is still holding.
+        /// </summary>
+        /// <remarks>
+        /// Zero on every successful path: the assembly pass releases what the hydration pass attached as soon as
+        /// it has consumed it, and the late cleanup pass releases anything an aborted build left behind. A
+        /// non-zero count at the end of a build therefore means a transient decrypted mesh is still attached to
+        /// the clone, which is the one state this feature must never ship.
+        /// </remarks>
+        internal int ProtectedMeshLeaseCount => _protectedMeshLeases.Count;
+
+        /// <summary>
+        /// Records a transient mesh the protected-mesh hydration pass attached to the build clone.
+        /// </summary>
+        /// <remarks>
+        /// The lease owns the mesh: it restores the renderer's previous mesh and destroys the transient copy when
+        /// it is disposed. Recording it here is what makes "every lease is released" a property of the build
+        /// rather than of one pass's control flow.
+        /// </remarks>
+        internal void RecordProtectedMeshLease(ApaProtectedMeshLease lease)
+        {
+            if (lease == null) return;
+            _protectedMeshLeases.Add(lease);
+        }
+
+        /// <summary>
+        /// Releases every lease this build holds, whether or not the build succeeded.
+        /// </summary>
+        /// <remarks>
+        /// Safe to call more than once: a disposed lease is idempotent and is removed from the list, so the
+        /// second call finds an empty list. This is the single release point every path funnels through.
+        /// </remarks>
+        /// <returns>Number of leases released.</returns>
+        internal int ReleaseProtectedMeshLeases()
+        {
+            var released = 0;
+            var leases = _protectedMeshLeases.ToArray();
+            _protectedMeshLeases.Clear();
+
+            for (var i = 0; i < leases.Length; i++)
+            {
+                leases[i].Dispose();
+                released++;
+            }
+
+            return released;
+        }
 
         /// <summary>
         /// Records the source→target renderer object pairs a successful assembly produced.

@@ -107,8 +107,13 @@ namespace AvatarPartAssembler.Editor.Ndmf
         /// <inheritdoc />
         protected override void Configure()
         {
+            // Two Generating passes, in this order. The hydration pass puts a protected part's decoded geometry
+            // back on the clone as a transient mesh; the merge-armature pass then plans the merge from the live
+            // renderer exactly as it does for an ordinary part. Running the merge pass first would leave Modular
+            // Avatar with a mesh-less renderer to inspect.
             InPhase(BuildPhase.Generating)
-                .Run(ApaMergeArmaturePass.Instance);
+                .Run(ApaProtectedMeshPass.Instance)
+                .Then.Run(ApaMergeArmaturePass.Instance);
 
             // One sequence, one order: the assembly pass runs first, and the retarget step is declared inside the
             // same sequence so the mapping it registers can only ever be registered for an assembly that already
@@ -156,6 +161,14 @@ namespace AvatarPartAssembler.Editor.Ndmf
                 .AfterPlugin(ModularAvatarLateTransformPluginQualifiedName)
                 .WaitFor(ApaAnimatorRetargetPass.Instance)
                 .Run(ApaEmptySourceCleanupPass.Instance);
+
+            // The last APA step of a build, in a later phase than everything above. Its only job is to release a
+            // protected part's transient decrypted mesh if the assembly pass never got to it — an aborted build, a
+            // disabled pass, or an exception in another plugin. NDMF serializes the avatar after Optimizing, so a
+            // lease that survived to that point would otherwise be written into the project as a real mesh asset,
+            // which is the one leak this feature must not produce. It never reports and never blocks.
+            InPhase(BuildPhase.Optimizing)
+                .Run(ApaProtectedMeshLeaseCleanupPass.Instance);
         }
     }
 }

@@ -106,6 +106,146 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <summary>The selected part mesh, or null.</summary>
         public Mesh PartMesh => ApaCompatibilityCapture.ResolveMesh(_partRenderer);
 
+        // --- Protected part geometry ---------------------------------------------------------------------
+        //
+        // A protected prefab is saved with its part renderer carrying no mesh at all: the geometry lives in an
+        // encrypted payload the installer references. Everything below resolves that payload lazily, keeps the
+        // transient decoded mesh for as long as it describes the part, and drops it the moment anything that
+        // decided it changes. Nothing here is serialized: the fields are [NonSerialized] and the mesh is created
+        // with HideAndDontSave, so a window that is closed, reloaded, or saved never carries decoded geometry
+        // into a scene or a project asset.
+
+        [NonSerialized] private bool _protectedResolved;
+        [NonSerialized] private string _protectedIdentity = string.Empty;
+        [NonSerialized] private bool _protectedPresent;
+        [NonSerialized] private ApaProtectedOverlayGeometry _protectedGeometry;
+        [NonSerialized] private ValidationIssue _protectedIssue;
+
+        /// <summary>
+        /// The protected payload that stands in for the part renderer's mesh, or null for an ordinary part.
+        /// </summary>
+        public ApaProtectedMeshAsset ProtectedMesh =>
+            ApaProtectedPartGeometry.ResolveAsset(_partRenderer, _partRoot, out _);
+
+        /// <summary>True when the part root carries an installer that references a protected payload.</summary>
+        public bool HasProtectedMesh => ProtectedMesh != null;
+
+        /// <summary>
+        /// The geometry the authoring overlays read: the live part mesh when there is one, otherwise the transient
+        /// mesh decoded from the part's protected payload.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The overlays — seam candidates, merge check, removal picking — read vertex positions, colors, and
+        /// submesh counts from a <see cref="Mesh"/>. A protected prefab has no live mesh, so without this the
+        /// overlays would silently draw nothing for exactly the parts the feature was used on.
+        /// </para>
+        /// <para>
+        /// <b>A live mesh always wins.</b> A prefab that still carries a real mesh is the ordinary path and is
+        /// returned unchanged; the payload is only consulted when there is nothing else to read, which is the same
+        /// precedence the build applies.
+        /// </para>
+        /// <para>
+        /// The returned mesh is never assigned to the renderer, never saved, and destroyed by
+        /// <see cref="InvalidateProtectedGeometry"/>. Reading it is safe for every overlay because the payload
+        /// carries the same attributes <c>MeshSnapshotFactory</c> reads from a real mesh.
+        /// </para>
+        /// </remarks>
+        public Mesh PartGeometryMesh
+        {
+            get
+            {
+                var live = PartMesh;
+                if (live != null) return live;
+
+                EnsureProtectedGeometry();
+                return _protectedGeometry != null ? _protectedGeometry.Mesh : null;
+            }
+        }
+
+        /// <summary>The decoded protected payload of the part, or null when the part is ordinary or unusable.</summary>
+        public ApaProtectedMeshData ProtectedData
+        {
+            get
+            {
+                EnsureProtectedGeometry();
+                return _protectedGeometry != null ? _protectedGeometry.Data : null;
+            }
+        }
+
+        /// <summary>
+        /// The blocking diagnostic when the part is protected but its payload cannot be used, or null.
+        /// </summary>
+        /// <remarks>
+        /// Null means "no payload" as well as "a usable payload": a caller that must distinguish the two asks
+        /// <see cref="HasProtectedMesh"/>.
+        /// </remarks>
+        public ValidationIssue ProtectedGeometryIssue
+        {
+            get
+            {
+                EnsureProtectedGeometry();
+                return _protectedIssue;
+            }
+        }
+
+        /// <summary>
+        /// Drops the transient decoded geometry and destroys its mesh.
+        /// </summary>
+        /// <remarks>
+        /// The window calls this from its derived-state invalidation — on a selection change, an undo, a profile
+        /// load, and a language switch — and from <c>OnDisable</c>, which is the whole lifetime contract: decoded
+        /// geometry never outlives the session that asked for it. Disposing is idempotent, so an invalidation that
+        /// races a close is harmless.
+        /// </remarks>
+        public void InvalidateProtectedGeometry()
+        {
+            _protectedResolved = false;
+            _protectedIdentity = string.Empty;
+            _protectedPresent = false;
+            _protectedIssue = null;
+
+            var geometry = _protectedGeometry;
+            _protectedGeometry = null;
+            if (geometry != null) geometry.Dispose();
+        }
+
+        /// <summary>Releases the transient decoded geometry this selection owns.</summary>
+        public void Dispose()
+        {
+            InvalidateProtectedGeometry();
+        }
+
+        /// <summary>
+        /// Resolves the protected overlay geometry, reusing it while the payload identity is unchanged.
+        /// </summary>
+        /// <remarks>
+        /// The identity check is the cheap half of the contract: an unchanged payload costs one identity string
+        /// built from a few byte reads, and a changed renderer, asset, part id, or payload revision costs one
+        /// cached decode plus one transient mesh. A payload that fails to decode is cached as a failure too, so a
+        /// corrupt asset is not re-decrypted once per repaint — and it starts working again the moment the asset
+        /// is repaired, because the repaired bytes produce a different identity.
+        /// </remarks>
+        private void EnsureProtectedGeometry()
+        {
+            var identity = ApaProtectedPartGeometry.IdentityOf(_partRenderer, _partRoot);
+
+            if (_protectedResolved && string.Equals(_protectedIdentity, identity, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            InvalidateProtectedGeometry();
+
+            _protectedResolved = true;
+            _protectedIdentity = identity;
+            _protectedPresent = ApaProtectedPartGeometry.ResolveAsset(_partRenderer, _partRoot, out _) != null;
+            if (!_protectedPresent) return;
+
+            _protectedGeometry = ApaProtectedOverlayGeometry.TryCreate(_partRenderer, _partRoot, out var issue);
+            _protectedIssue = issue;
+        }
+
         /// <summary>The avatar root transform, or null.</summary>
         public Transform AvatarRootTransform => _avatarRoot != null ? _avatarRoot.transform : null;
 
@@ -238,11 +378,27 @@ namespace AvatarPartAssembler.Editor.Authoring
             }
             else if (PartMesh == null)
             {
-                issues.Add(ValidationIssue.Error(
-                    ApaErrorCode.TargetRendererNotFound,
-                    ApaIssuePhase.Compatibility,
-                    "Part renderer '" + _partRenderer.name + "' has no mesh assigned.",
-                    detail: "renderer=" + _partRenderer.name));
+                // A protected prefab is saved with its part renderer carrying no mesh on purpose, so a null mesh
+                // is expected rather than a defect when the installer references a payload that decodes. The
+                // payload is decoded through the shared cache here — the same decode the build and the preview
+                // use — and a payload that is missing, corrupt, truncated, or written for another part fails
+                // closed with the codec's own APA053 instead of the ordinary mesh-less diagnostic. An ordinary
+                // mesh-less part still reports APA006, because for it the message and the remedy are both right.
+                EnsureProtectedGeometry();
+                if (_protectedPresent)
+                {
+                    if (_protectedIssue != null) issues.Add(_protectedIssue);
+                }
+                else
+                {
+                    issues.Add(ValidationIssue.Error(
+                        ApaErrorCode.TargetRendererNotFound,
+                        ApaIssuePhase.Compatibility,
+                        "Part renderer '" + _partRenderer.name + "' has no mesh assigned, so there is no geometry to " +
+                        "assemble. Assign the source mesh, or create the part prefab in protected mode so its mesh " +
+                        "travels in a protected payload the build can decode.",
+                        detail: "reason=missing-part-mesh; renderer=" + _partRenderer.name));
+                }
             }
             else if (!PartMesh.isReadable)
             {

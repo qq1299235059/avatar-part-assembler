@@ -272,6 +272,16 @@ namespace AvatarPartAssembler.Editor.Preview
         public const string Algorithm = "apa-preview-fnv1a64-v2";
 
         /// <summary>
+        /// Identifier of the geometry-only vocabulary, hashed into every value it produces.
+        /// </summary>
+        /// <remarks>
+        /// A distinct identifier, not a variant of <see cref="Algorithm"/>: the two fingerprints answer different
+        /// questions, and a future change to one of them must not be able to silently satisfy a comparison made
+        /// with the other.
+        /// </remarks>
+        public const string GeometryAlgorithm = "apa-preview-geometry-fnv1a64-v1";
+
+        /// <summary>
         /// Fingerprint used for an input set that could not be captured, and therefore must never be cached or
         /// compared against a captured one.
         /// </summary>
@@ -282,11 +292,75 @@ namespace AvatarPartAssembler.Editor.Preview
         {
             var builder = new ApaFingerprintBuilder();
             builder.Add(Algorithm);
+            AppendContext(builder, context, true);
+            return builder.Value;
+        }
 
+        /// <summary>
+        /// Fingerprint of everything that decides the <i>assembled geometry</i>, with material identities excluded.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>What it is for.</b> A preview node holds a generated mesh and a material list. Replacing the material
+        /// in a slot does not change a single vertex, so rebuilding the mesh for it is pure waste — but the full
+        /// fingerprint changes, because the material identity is part of the assembly input. Comparing this
+        /// fingerprint first is what lets the node answer "did anything that changes the geometry actually
+        /// change?" and reapply materials alone when the answer is no.
+        /// </para>
+        /// <para>
+        /// <b>Material identity is excluded; material <i>structure</i> is not.</b> The resolved layout — how many
+        /// final slots exist and which source submesh feeds each one — is hashed here even though it is derived
+        /// from the materials. That is deliberate: the generated mesh's submesh count and triangle grouping come
+        /// from the layout, so a change that would reshape the layout (a contribution merging into another slot, a
+        /// slot splitting out, a policy change) must invalidate the geometry exactly as a mesh edit does. Only the
+        /// asset behind a slot, and the label the slot happens to carry, are free to change without a rebuild.
+        /// </para>
+        /// <para>
+        /// The layout is resolved here with the same resolver the assembly uses, so "the layout this fingerprint
+        /// describes" and "the layout the mesh was built from" cannot be two different answers.
+        /// </para>
+        /// </remarks>
+        public static string OfGeometryContext(ValidationContext context)
+        {
+            var builder = new ApaFingerprintBuilder();
+            builder.Add(GeometryAlgorithm);
+            AppendContext(builder, context, false);
+            AppendMaterialLayout(builder, context);
+            return builder.Value;
+        }
+
+        /// <summary>Fingerprint of a captured mesh, attribute by attribute.</summary>
+        public static string OfMesh(MeshSnapshot mesh)
+        {
+            var builder = new ApaFingerprintBuilder();
+            builder.Add(Algorithm);
+            AddMesh(builder, mesh);
+            return builder.Value;
+        }
+
+        /// <summary>Fingerprint of the numeric tolerances.</summary>
+        public static string OfNumericPolicy(ApaNumericPolicy policy)
+        {
+            var builder = new ApaFingerprintBuilder();
+            builder.Add(Algorithm);
+            AddPolicy(builder, policy);
+            return builder.Value;
+        }
+
+        /// <summary>The shared body of both context fingerprints.</summary>
+        /// <param name="includeMaterialIdentity">
+        /// True to hash the material asset behind every source and slot; false to hash only the structure those
+        /// materials resolve to.
+        /// </param>
+        private static void AppendContext(
+            ApaFingerprintBuilder builder,
+            ValidationContext context,
+            bool includeMaterialIdentity)
+        {
             if (context == null)
             {
                 builder.Add(UncachedMarker);
-                return builder.Value;
+                return;
             }
 
             builder.Add("policy");
@@ -307,36 +381,65 @@ namespace AvatarPartAssembler.Editor.Preview
                 builder.Add(context.Base.RendererLocalToWorld);
                 AddSpaceTransforms(builder, context.Base.Transforms);
                 AddUvSemantics(builder, context.Base.ExpectedUvSemantics);
-                AddMaterialSemantics(builder, context.Base.ExpectedMaterialSemantics);
-                AddMaterials(builder, context.Base.RendererMaterials);
+                AddMaterialSemantics(builder, context.Base.ExpectedMaterialSemantics, includeMaterialIdentity);
+                if (includeMaterialIdentity) AddMaterials(builder, context.Base.RendererMaterials);
             }
 
             builder.Add("parts");
             builder.Add(context.Parts == null ? -1 : context.Parts.Count);
             if (context.Parts != null)
             {
-                for (var i = 0; i < context.Parts.Count; i++) AddPart(builder, context.Parts[i]);
+                for (var i = 0; i < context.Parts.Count; i++)
+                {
+                    AddPart(builder, context.Parts[i], includeMaterialIdentity);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Hashes the resolved material layout's structure: how many slots there are and which source submesh
+        /// feeds each one.
+        /// </summary>
+        /// <remarks>
+        /// <b>Why the semantic name is not hashed.</b> A slot's semantic labels it; it does not place a triangle.
+        /// The assembler decides every submesh from <c>FindSlotFor(partId, subMesh)</c> — the mapping hashed here —
+        /// and a material swap that changes an <i>inferred</i> semantic (the fallback name is the material's own
+        /// name) changes no geometry at all. Hashing the name would turn every such swap into a full rebuild of a
+        /// mesh that did not change. A swap that genuinely moves geometry — merging a contribution into another
+        /// slot, or separating one out — changes this mapping and is caught.
+        /// </remarks>
+        private static void AppendMaterialLayout(ApaFingerprintBuilder builder, ValidationContext context)
+        {
+            builder.Add("material-layout");
+            if (context == null)
+            {
+                builder.Add("no-context");
+                return;
             }
 
-            return builder.Value;
-        }
+            // The resolver reports conflicts as issues; the fingerprint is not the place to report them, so they
+            // are collected into a list that is discarded. A conflicting layout still hashes deterministically,
+            // and the assembly that consumes it reports the conflict once, in the diagnostic stream.
+            var layout = MaterialResolver.Resolve(
+                MaterialResolver.CollectSources(context, new List<ValidationIssue>()),
+                new List<ValidationIssue>());
 
-        /// <summary>Fingerprint of a captured mesh, attribute by attribute.</summary>
-        public static string OfMesh(MeshSnapshot mesh)
-        {
-            var builder = new ApaFingerprintBuilder();
-            builder.Add(Algorithm);
-            AddMesh(builder, mesh);
-            return builder.Value;
-        }
+            builder.Add(layout.SlotCount);
+            for (var i = 0; i < layout.SlotCount; i++)
+            {
+                var sources = layout.Slots[i].SourceSubMeshes;
 
-        /// <summary>Fingerprint of the numeric tolerances.</summary>
-        public static string OfNumericPolicy(ApaNumericPolicy policy)
-        {
-            var builder = new ApaFingerprintBuilder();
-            builder.Add(Algorithm);
-            AddPolicy(builder, policy);
-            return builder.Value;
+                // A dictionary's enumeration order is not a contract, so the sources are sorted before they are
+                // hashed: the same layout must produce the same fingerprint in every process and every session.
+                var keys = new List<string>(sources.Keys);
+                keys.Sort(StringComparer.Ordinal);
+                builder.Add(keys.Count);
+                for (var k = 0; k < keys.Count; k++)
+                {
+                    builder.Add(keys[k]);
+                    builder.Add(sources[keys[k]]);
+                }
+            }
         }
 
         private static void AddPolicy(ApaFingerprintBuilder builder, ApaNumericPolicy policy)
@@ -378,7 +481,7 @@ namespace AvatarPartAssembler.Editor.Preview
             builder.AddStrings(profile.BonePaths);
         }
 
-        private static void AddPart(ApaFingerprintBuilder builder, PartSnapshot part)
+        private static void AddPart(ApaFingerprintBuilder builder, PartSnapshot part, bool includeMaterialIdentity)
         {
             if (part == null)
             {
@@ -397,7 +500,7 @@ namespace AvatarPartAssembler.Editor.Preview
             AddMesh(builder, part.Mesh);
             AddSpaceTransforms(builder, part.Transforms);
             AddUvSemantics(builder, part.UvSemantics);
-            AddMaterialSemantics(builder, part.MaterialSemantics);
+            AddMaterialSemantics(builder, part.MaterialSemantics, includeMaterialIdentity);
 
             builder.Add("removal");
             if (part.RemovedTriangles == null)
@@ -430,7 +533,7 @@ namespace AvatarPartAssembler.Editor.Preview
                 AddSeamSide(builder, part.Seam.Part);
             }
 
-            AddMaterials(builder, part.RendererMaterials);
+            AddMaterials(builder, part.RendererMaterials, includeMaterialIdentity);
         }
 
         private static void AddSeamSide(ApaFingerprintBuilder builder, ApaSeamSide side)
@@ -605,7 +708,8 @@ namespace AvatarPartAssembler.Editor.Preview
 
         private static void AddMaterialSemantics(
             ApaFingerprintBuilder builder,
-            IReadOnlyList<ApaMaterialSlotSemantic> semantics)
+            IReadOnlyList<ApaMaterialSlotSemantic> semantics,
+            bool includeMaterialIdentity)
         {
             builder.Add("material-semantics");
             if (semantics == null)
@@ -624,15 +728,30 @@ namespace AvatarPartAssembler.Editor.Preview
                     continue;
                 }
 
-                builder.Add(semantic.Semantic);
+                // A slot's label is hashed only for the full fingerprint. It is not a geometry input of its own:
+                // for an inferred declaration the label is the material asset's name, so hashing it here would
+                // rebuild the mesh — and re-decrypt a protected payload — for a material swap that moved no
+                // vertex, which is exactly what the geometry fingerprint exists to avoid. A rename that really
+                // moves geometry changes the resolved layout, and OfGeometryContext hashes that separately
+                // (AppendMaterialLayout); a rename that does not change the layout changes nothing that is drawn.
+                if (includeMaterialIdentity) builder.Add(semantic.Semantic);
                 builder.Add(semantic.SourceSubMesh);
                 builder.Add((int)semantic.Policy);
-                builder.AddObjectIdentity(semantic.Material);
+
+                // A declared material is an assembly input, but not a geometry input: replacing the asset behind a
+                // declaration leaves every vertex and every slot where it was. The geometry fingerprint therefore
+                // hashes the declaration without the asset.
+                if (includeMaterialIdentity) builder.AddObjectIdentity(semantic.Material);
             }
         }
 
-        private static void AddMaterials(ApaFingerprintBuilder builder, IReadOnlyList<Material> materials)
+        private static void AddMaterials(
+            ApaFingerprintBuilder builder,
+            IReadOnlyList<Material> materials,
+            bool includeMaterialIdentity = true)
         {
+            if (!includeMaterialIdentity) return;
+
             builder.Add("materials");
             if (materials == null)
             {

@@ -42,12 +42,25 @@ namespace AvatarPartAssembler.Editor
         /// Resolves the effective bone-identity scope for a part renderer before or after Modular Avatar armature merging.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// The authoring contract remains strict: the stored part-armature path must be a real selection under the
         /// part root before the merge. During an actual NDMF build, Modular Avatar may then retarget every weighted
         /// bone onto the selected target armature while the part renderer itself survives for APA to consume.
         /// In that verified post-merge state the target armature is the correct live scope for capturing the same
         /// relative bone identities. Nothing is inferred from names and a missing selection is never accepted.
+        /// </para>
+        /// <para>
+        /// <b>A protected part supplies its weights explicitly.</b> A protected prefab saves its renderer with no
+        /// mesh, so the renderer alone cannot answer "does this part carry effective weighted influence, and are
+        /// those bones inside the selected armature". <paramref name="weightsOverride"/> is the decoded payload's
+        /// weight list, which is the same data the unprotected path would have read from the live mesh, so both
+        /// paths reach the same armature decision. When it is null or empty the live mesh is read exactly as
+        /// before, which is what keeps the unprotected path byte-for-byte unchanged.
+        /// </para>
         /// </remarks>
+        /// <param name="weightsOverride">
+        /// The decoded protected payload's bone weights, or null to read the renderer's own live mesh.
+        /// </param>
         public static bool TryResolvePartCaptureScope(
             Transform partRoot,
             string partArmaturePath,
@@ -57,7 +70,8 @@ namespace AvatarPartAssembler.Editor
             bool allowPostMergeTargetScope,
             string partId,
             List<ValidationIssue> issues,
-            out Transform armature)
+            out Transform armature,
+            IReadOnlyList<BoneWeight> weightsOverride = null)
         {
             armature = null;
 
@@ -93,8 +107,8 @@ namespace AvatarPartAssembler.Editor
                 // Normal authoring / preview state: the renderer is still skinned to the selected part armature.
                 // A selected armature with no effective weighted influences is also valid and should preserve the
                 // existing behavior rather than manufacturing a post-merge fallback.
-                if (!HasEffectiveWeightedInfluence(renderer, policy)
-                    || WeightedBonesAreInside(renderer, selectedPartArmature, policy))
+                if (!HasEffectiveWeightedInfluence(renderer, policy, weightsOverride)
+                    || WeightedBonesAreInside(renderer, selectedPartArmature, policy, weightsOverride))
                 {
                     armature = selectedPartArmature;
                     return true;
@@ -103,7 +117,7 @@ namespace AvatarPartAssembler.Editor
                 // Important for the case where PartArmaturePath == "." or MA retains the selected object as an
                 // intermediate because it carries components: the path can still resolve even though MA has moved
                 // every effective weighted bone into the target armature. Prefer the proven live target scope.
-                if (WeightedBonesAreInside(renderer, targetArmature, policy))
+                if (WeightedBonesAreInside(renderer, targetArmature, policy, weightsOverride))
                 {
                     armature = targetArmature;
                     return true;
@@ -119,7 +133,7 @@ namespace AvatarPartAssembler.Editor
             // part root. Accept that state only when a real selection was serialized and the live renderer proves
             // that all effective weighted bones are now inside the already-resolved target armature.
             if (ApaAvatarPath.HasIdentity(partArmaturePath)
-                && WeightedBonesAreInside(renderer, targetArmature, policy))
+                && WeightedBonesAreInside(renderer, targetArmature, policy, weightsOverride))
             {
                 armature = targetArmature;
                 return true;
@@ -136,16 +150,19 @@ namespace AvatarPartAssembler.Editor
                 out armature);
         }
 
-        private static bool HasEffectiveWeightedInfluence(Renderer renderer, ApaNumericPolicy policy)
+        private static bool HasEffectiveWeightedInfluence(
+            Renderer renderer,
+            ApaNumericPolicy policy,
+            IReadOnlyList<BoneWeight> weightsOverride)
         {
             var skinned = renderer as SkinnedMeshRenderer;
-            if (skinned == null || skinned.sharedMesh == null || !skinned.sharedMesh.isReadable) return false;
+            if (skinned == null) return false;
 
-            var weights = skinned.sharedMesh.boneWeights;
-            if (weights == null || weights.Length == 0) return false;
+            var weights = EffectiveWeights(skinned, weightsOverride);
+            if (weights == null || weights.Count == 0) return false;
 
             var effective = policy ?? ApaNumericPolicy.Default;
-            for (var i = 0; i < weights.Length; i++)
+            for (var i = 0; i < weights.Count; i++)
             {
                 var weight = weights[i];
                 if (!effective.IsNegligibleWeight(weight.weight0)
@@ -163,22 +180,22 @@ namespace AvatarPartAssembler.Editor
         private static bool WeightedBonesAreInside(
             Renderer renderer,
             Transform armature,
-            ApaNumericPolicy policy)
+            ApaNumericPolicy policy,
+            IReadOnlyList<BoneWeight> weightsOverride)
         {
             var skinned = renderer as SkinnedMeshRenderer;
             if (skinned == null || armature == null) return false;
 
-            var mesh = skinned.sharedMesh;
             var bones = skinned.bones;
-            if (mesh == null || !mesh.isReadable || bones == null || bones.Length == 0) return false;
+            if (bones == null || bones.Length == 0) return false;
 
-            var weights = mesh.boneWeights;
-            if (weights == null || weights.Length == 0) return false;
+            var weights = EffectiveWeights(skinned, weightsOverride);
+            if (weights == null || weights.Count == 0) return false;
 
             var effective = policy ?? ApaNumericPolicy.Default;
             var sawWeightedBone = false;
 
-            for (var i = 0; i < weights.Length; i++)
+            for (var i = 0; i < weights.Count; i++)
             {
                 var weight = weights[i];
                 if (!InfluenceIsInside(bones, armature, weight.boneIndex0, weight.weight0, effective, ref sawWeightedBone)
@@ -191,6 +208,27 @@ namespace AvatarPartAssembler.Editor
             }
 
             return sawWeightedBone;
+        }
+
+        /// <summary>
+        /// The weight list the armature decision reads: the decoded payload's weights when one was supplied, or
+        /// the renderer's own live mesh weights otherwise.
+        /// </summary>
+        /// <remarks>
+        /// A protected part's renderer has no mesh, so the live read is not merely redundant there — it would
+        /// always answer "no influence" and silently collapse the post-merge fallback. The override is only used
+        /// when it actually carries entries; an empty list means "the payload has no skinning", which is a real
+        /// state and must not be replaced by a live read that cannot exist.
+        /// </remarks>
+        private static IReadOnlyList<BoneWeight> EffectiveWeights(
+            SkinnedMeshRenderer skinned,
+            IReadOnlyList<BoneWeight> weightsOverride)
+        {
+            if (weightsOverride != null) return weightsOverride;
+
+            var mesh = skinned != null ? skinned.sharedMesh : null;
+            if (mesh == null || !mesh.isReadable) return null;
+            return mesh.boneWeights;
         }
 
         private static bool InfluenceIsInside(

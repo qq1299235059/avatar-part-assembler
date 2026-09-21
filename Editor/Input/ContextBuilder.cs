@@ -1292,14 +1292,43 @@ namespace AvatarPartAssembler.Editor
                     ? partSkinned.sharedMesh
                     : partRenderer.GetComponent<MeshFilter>()?.sharedMesh;
 
-                if (partMesh == null)
+                // A protected prefab saves its part renderer with no mesh at all, so a null mesh is expected
+                // rather than a defect when the installer carries a payload. The payload is decoded here, through
+                // the same codec the build hydration pass uses, and the decoded data becomes an ordinary part
+                // snapshot: every later rule — fingerprint, bone scope, seam, UV, blend shape, material — runs on
+                // it exactly as it would on a live mesh.
+                //
+                // A live mesh wins when both are present. That is deliberate: during an NDMF build Modular Avatar
+                // may rewrite the part's skinning after the hydration pass attached the decoded mesh, and the
+                // assembly must consume what the merge produced, not what the payload originally held.
+                //
+                // The decode goes through ApaProtectedMeshCache, so a protected part is decrypted once per payload
+                // content identity and every later capture of the same unchanged payload reuses the same decoded
+                // arrays. An ordinary part never reaches this branch, so it never enters the codec at all (R8).
+                ApaProtectedMeshData protectedData = null;
+                if (partMesh == null && installer.ProtectedMesh != null)
+                {
+                    if (!ApaProtectedMeshCache.TryDecode(
+                            installer.ProtectedMesh,
+                            PartIdOf(installer),
+                            out protectedData,
+                            out var decodeIssue))
+                    {
+                        issues.Add(decodeIssue);
+                        continue;
+                    }
+                }
+
+                if (partMesh == null && protectedData == null)
                 {
                     issues.Add(ValidationIssue.Error(
                         ApaErrorCode.TargetRendererNotFound,
                         ApaIssuePhase.Compatibility,
-                        "Part renderer '" + partRenderer.name + "' has no mesh assigned.",
+                        "Part renderer '" + partRenderer.name + "' has no mesh assigned, so there is no geometry to " +
+                        "assemble. Assign the source mesh, or create the part prefab in protected mode so its mesh " +
+                        "travels in a protected payload the build can decode.",
                         PartIdOf(installer),
-                        detail: "renderer=" + partRenderer.name));
+                        detail: "reason=missing-part-mesh; renderer=" + partRenderer.name));
                     continue;
                 }
 
@@ -1320,7 +1349,8 @@ namespace AvatarPartAssembler.Editor
                             allowPostMergePartArmatureScope,
                             PartIdOf(installer),
                             issues,
-                            out partArmature))
+                            out partArmature,
+                            protectedData != null ? protectedData.SkinWeights : null))
                     {
                         continue;
                     }
@@ -1328,12 +1358,25 @@ namespace AvatarPartAssembler.Editor
 
                 var partBoneSignature = MeshSnapshotFactory.CaptureBoneSignature(partArmature, partRenderer);
 
-                var meshSnapshot = MeshSnapshotFactory.Capture(
-                    partMesh,
-                    partBoneSignature.Paths,
-                    out var captureIssues,
-                    MeshSnapshotFactory.CaptureBoneWorldToLocalMatrices(partRenderer));
-                issues.AddRange(captureIssues);
+                MeshSnapshot meshSnapshot;
+                if (protectedData != null)
+                {
+                    // The bone identity is the live one, exactly as the unprotected path records it: the payload's
+                    // stored paths are only a fallback for a renderer whose bones can no longer be read.
+                    meshSnapshot = protectedData.CreateSnapshot(
+                        partBoneSignature.Paths,
+                        MeshSnapshotFactory.CaptureBoneWorldToLocalMatrices(partRenderer));
+                }
+                else
+                {
+                    meshSnapshot = MeshSnapshotFactory.Capture(
+                        partMesh,
+                        partBoneSignature.Paths,
+                        out var captureIssues,
+                        MeshSnapshotFactory.CaptureBoneWorldToLocalMatrices(partRenderer));
+                    issues.AddRange(captureIssues);
+                }
+
                 if (meshSnapshot == null) continue;
 
                 ApaArmatureScope.ValidateWeightedBoneScopes(

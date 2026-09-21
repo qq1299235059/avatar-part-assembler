@@ -90,6 +90,30 @@ namespace AvatarPartAssembler.Editor.Authoring
         [SerializeField] private string _prefabPath = string.Empty;
         [SerializeField] private bool _captureSignatureOnTargetChange = true;
         [SerializeField] private bool _allowOverwrite;
+
+        /// <summary>
+        /// Whether <c>Create Part Prefab</c> publishes the part mesh as a protected payload. Off by default.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Window state, never profile data.</b> The toggle decides what one creation action writes; the
+        /// resulting fact — the installer's reference to the payload — is stored on the prefab, and the profile
+        /// keeps its ordinary shape. Adding this to <see cref="ApaPartProfile"/> would make every profile in every
+        /// project carry a flag that says nothing about the part.
+        /// </para>
+        /// <para>
+        /// <b>It changes creation only.</b> Saving a profile, validating, previewing, building, and
+        /// <c>Update Installer On Prefab</c> are unaffected: they read whatever the prefab already carries, so an
+        /// existing unprotected prefab keeps working exactly as before and a protected one keeps working after
+        /// the toggle is switched back off.
+        /// </para>
+        /// <para>
+        /// <b>It defaults to off.</b> Protection is a distribution decision with a real consequence — the source
+        /// mesh must be kept out of the delivery and the payload must ship beside the prefab — so it is never
+        /// chosen for the author by a remembered default.
+        /// </para>
+        /// </remarks>
+        [SerializeField] private bool _protectPartMesh;
         // These are the complete Scene View overlay controls. They live in the top toolbar so the author can see
         // the active visual mode without scrolling to a mesh-specific section.
         [SerializeField] private bool _showCandidateOverlay = true;
@@ -394,6 +418,11 @@ namespace AvatarPartAssembler.Editor.Authoring
             // tool is torn down here rather than merely forgotten.
             _sceneTool?.Dispose();
             _sceneTool = null;
+
+            // The selection owns the transient mesh decoded from a protected payload. A closed window must not
+            // leave decoded geometry behind: nothing can reach it any more, and the next open would build a second
+            // copy. Disposing here is the end of the session's lifetime contract for that object.
+            _selection?.Dispose();
         }
 
         /// <summary>Refreshes the window chrome after a language switch.</summary>
@@ -482,6 +511,12 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             SeamCandidates.Invalidate();
             _sceneTool?.InvalidateMeshCache();
+
+            // The transient mesh decoded from a protected payload is derived state in the strongest sense: it
+            // exists only so the overlays can read geometry a protected prefab deliberately does not carry. Every
+            // reason to drop the other derived answers — a selection change, an undo, a profile load — is a reason
+            // to drop this one too, and dropping it destroys the mesh rather than leaving it for the next repaint.
+            _selection?.InvalidateProtectedGeometry();
 
             _validation = null;
             _dryRun = null;
@@ -1025,6 +1060,66 @@ namespace AvatarPartAssembler.Editor.Authoring
                         ApaAuthoringAssetPaths.DescribePathReason(
                             reason, ApaAuthoringAssetPaths.ProfileExtension)), MessageType.Error);
             }
+
+            DrawProtectedMeshControls();
+        }
+
+        /// <summary>
+        /// The protected-mesh option: the toggle, the payload path it implies, and the rule it enforces.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>The payload path is derived, not typed.</b> It is the prefab path with a
+        /// <c>_ProtectedMesh</c> suffix (see <see cref="ApaProtectedMeshAssetWriter.DefaultPathFor"/>), which is
+        /// what keeps the two files visibly paired in the Project window. A second editable path field would be
+        /// one more thing that can disagree with the prefab it protects, and the pairing is the delivery rule.
+        /// </para>
+        /// <para>
+        /// <b>The consequence is stated, not implied.</b> Turning the toggle on changes what the author must
+        /// deliver: the prefab alone stops being a complete part, and the source mesh must not be shipped. That is
+        /// a sentence in the window, not a tooltip, because it is the one thing about this feature that can go
+        /// wrong after the fact.
+        /// </para>
+        /// </remarks>
+        private void DrawProtectedMeshControls()
+        {
+            EditorGUILayout.Space();
+
+            _protectPartMesh = EditorGUILayout.ToggleLeft(
+                Tr("Protect the part mesh (write an encrypted payload instead of the mesh)"), _protectPartMesh);
+
+            if (!_protectPartMesh)
+            {
+                EditorGUILayout.LabelField(
+                    Tr("Off: the prefab references the source mesh exactly as it always has."),
+                    EditorStyles.miniLabel);
+                return;
+            }
+
+            var protectedPath = ApaProtectedMeshAssetWriter.DefaultPathFor(_prefabPath);
+            EditorGUILayout.LabelField(Tr("Protected Mesh Asset"), protectedPath, EditorStyles.miniLabel);
+
+            if (!string.IsNullOrEmpty(protectedPath))
+            {
+                var existingPayload = ApaAssetDatabaseUtility.Load<ApaProtectedMeshAsset>(protectedPath);
+                if (existingPayload != null)
+                {
+                    EditorGUILayout.LabelField(
+                        Tr("A protected mesh asset already exists at this path. Replacing it is asked for again " +
+                           "when the prefab replacement is confirmed."),
+                        EditorStyles.miniLabel);
+                }
+            }
+
+            EditorGUILayout.HelpBox(
+                Tr("The part mesh is written to the protected asset as an authenticated, encrypted payload and " +
+                   "the prefab's part renderer is saved with no mesh, so the prefab no longer depends on the " +
+                   "source mesh or its model file. The payload must be delivered together with the prefab: a " +
+                   "prefab whose payload is missing cannot be assembled. This protects the distribution format " +
+                   "and detects tampering; it is not unextractable DRM, because a build that runs in the Editor " +
+                   "can be observed while it runs. Materials, textures, bones, and animation remain ordinary " +
+                   "assets. Recreate the protected prefab after the source mesh changes."),
+                MessageType.Info);
         }
 
         /// <summary>
@@ -1621,7 +1716,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                 _selection.TargetRenderer,
                 _selection.TargetMesh,
                 _selection.PartRenderer,
-                _selection.PartMesh,
+                _selection.PartGeometryMesh,
                 _seamTolerance,
                 targetCandidates.MatcherCandidateIndices,
                 partCandidates.Indices);
@@ -1676,7 +1771,7 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             var target = ApaSeamSpatialTargetCandidates.Resolve(_selection.TargetRenderer, _selection.TargetMesh);
             var part = ApaSeamVertexColorCandidates.ResolvePartCandidates(
-                _selection.PartRenderer, _selection.PartMesh, _seamCandidateColor);
+                _selection.PartRenderer, _selection.PartGeometryMesh, _seamCandidateColor);
 
             SeamCandidates.Store(target, part);
         }
@@ -1722,7 +1817,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(Tr("Infer From Part Mesh"), GUILayout.Width(170)))
             {
-                var mesh = _selection.PartMesh;
+                var mesh = _selection.PartGeometryMesh;
                 if (mesh == null || !mesh.isReadable)
                 {
                     SetStatus(Tr("Select a readable part mesh before inferring UV semantics."));
@@ -1830,7 +1925,9 @@ namespace AvatarPartAssembler.Editor.Authoring
                 else
                 {
                     Undo.RecordObject(this, Tr("Infer Material Semantics"));
-                    var subMeshCount = _selection.PartMesh != null ? _selection.PartMesh.subMeshCount : 0;
+                    var subMeshCount = _selection.PartGeometryMesh != null
+                        ? _selection.PartGeometryMesh.subMeshCount
+                        : 0;
                     _draft.InferMaterialSemanticsFrom(subMeshCount, renderer.sharedMaterials);
                     MarkSelectionDirty();
                     SetStatus(TrFormat("Inferred {0} material semantic(s).", _draft.MaterialSemantics.Length));
@@ -1910,8 +2007,12 @@ namespace AvatarPartAssembler.Editor.Authoring
             }
 
             EditorGUILayout.LabelField(
-                Tr("A material must be a project asset: a scene material cannot be stored in a reusable profile " +
-                   "(APA034). The asset name is never used as the semantic."), EditorStyles.miniLabel);
+                Tr("The material field is this profile's authoring default. The build takes the part renderer's " +
+                   "own material in that slot and falls back to this asset only when the renderer has none " +
+                   "there, so replacing a material on the renderer is what changes the built avatar and is " +
+                   "never written back into this profile. A material must be a project asset: a scene material " +
+                   "cannot be stored in a reusable profile (APA034). The asset name is never used as the " +
+                   "semantic."), EditorStyles.miniLabel);
 
             DrawIssuesForPhase(DraftDataIssues(), ApaIssuePhase.Materials, Tr("Material semantic problems"));
         }
@@ -2418,18 +2519,58 @@ namespace AvatarPartAssembler.Editor.Authoring
             var profileAsset = ResolveSavedProfile();
             if (profileAsset == null) return;
 
-            var result = ApaPrefabGenerator.CreateFromScene(_selection, profileAsset, _prefabPath, _allowOverwrite);
+            // The payload path is derived from the prefab path at the moment of creation, so the two files always
+            // travel together. It is computed once and reused for the confirmation retry: a path that changed
+            // between the two calls would write the payload somewhere the author never saw.
+            var protectPartMesh = _protectPartMesh;
+            var protectedMeshPath = protectPartMesh
+                ? ApaProtectedMeshAssetWriter.DefaultPathFor(_prefabPath)
+                : null;
+
+            var result = ApaPrefabGenerator.CreateFromScene(
+                _selection, profileAsset, _prefabPath, _allowOverwrite, protectPartMesh, protectedMeshPath);
 
             if (result.RequiresOverwriteConfirmation)
             {
-                var replace = EditorUtility.DisplayDialog(
-                    Tr("Replace existing prefab?"),
-                    TrFormat(
+                // Two different files can be in the way, and they need two different sentences: "a prefab already
+                // exists" sends the author to the prefab, "a protected mesh asset already exists" sends them to
+                // the payload. The generator reports which one it refused on. When both exist, one dialog names
+                // both, because a single "Replace" that silently rewrote a second file would be a confirmation
+                // the author never gave.
+                var payloadBlocked = result.Status == ApaPrefabStatus.RefusedProtectedOverwrite;
+                var existingPayload = protectPartMesh && !string.IsNullOrEmpty(protectedMeshPath)
+                    ? ApaAssetDatabaseUtility.Load<ApaProtectedMeshAsset>(protectedMeshPath)
+                    : null;
+
+                string title;
+                string message;
+                if (payloadBlocked)
+                {
+                    title = Tr("Replace existing protected mesh asset?");
+                    message = TrFormat(
+                        "A protected mesh asset already exists at\n\n{0}\n\nReplacing it keeps the asset's GUID, " +
+                        "so a prefab that already references it keeps working, and it is restored if the prefab " +
+                        "cannot be written. Replace it?", result.Path);
+                }
+                else if (existingPayload != null)
+                {
+                    title = Tr("Replace existing prefab and protected mesh asset?");
+                    message = TrFormat(
+                        "A prefab already exists at\n\n{0}\n\nThe protected mesh asset at\n\n{1}\n\nis replaced " +
+                        "as well, keeping its GUID so a prefab that already references it keeps working. Use " +
+                        "'Update installer on prefab' instead to keep the prefab's own content. Replace both?",
+                        result.Path, protectedMeshPath);
+                }
+                else
+                {
+                    title = Tr("Replace existing prefab?");
+                    message = TrFormat(
                         "A prefab already exists at\n\n{0}\n\nReplacing it writes the current scene part over " +
                         "the existing prefab content. Use 'Update installer on prefab' instead to keep the " +
-                        "prefab's own content. Replace it?", result.Path),
-                    Tr("Replace"),
-                    Tr("Cancel"));
+                        "prefab's own content. Replace it?", result.Path);
+                }
+
+                var replace = EditorUtility.DisplayDialog(title, message, Tr("Replace"), Tr("Cancel"));
 
                 if (!replace)
                 {
@@ -2437,7 +2578,8 @@ namespace AvatarPartAssembler.Editor.Authoring
                     return;
                 }
 
-                result = ApaPrefabGenerator.CreateFromScene(_selection, profileAsset, _prefabPath, true);
+                result = ApaPrefabGenerator.CreateFromScene(
+                    _selection, profileAsset, _prefabPath, true, protectPartMesh, protectedMeshPath);
             }
 
             ReportPrefabResult(result);
@@ -2549,7 +2691,10 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             if (!string.IsNullOrEmpty(_draft.PartMeshFingerprint)) return true;
 
-            var mesh = _selection.PartMesh;
+            // The geometry is the live mesh when the part has one, and the decoded payload when it is protected.
+            // Both are the same bytes the build would fingerprint, so a profile captured from a protected part
+            // records the fingerprint of the mesh that payload was created from.
+            var mesh = _selection.PartGeometryMesh;
             if (mesh == null || !mesh.isReadable) return false;
 
             var fingerprint = ApaMeshFingerprint.OfMesh(mesh);
@@ -2628,7 +2773,8 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             if (_draftDataIssues == null || _liveChecksDirty)
             {
-                _draftDataIssues = ApaAuthoringValidation.ValidateDraftDataAgainstMesh(_draft, _selection.PartMesh);
+                _draftDataIssues = ApaAuthoringValidation.ValidateDraftDataAgainstMesh(
+                    _draft, _selection.PartGeometryMesh);
             }
 
             return _draftDataIssues;
@@ -2689,7 +2835,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             }
 
             var baseMesh = _selection.TargetMesh;
-            var partMesh = _selection.PartMesh;
+            var partMesh = _selection.PartGeometryMesh;
 
             _seamCheck = ValidationResult.Build(seam.Validate(
                 baseMesh != null ? baseMesh.vertexCount : -1,

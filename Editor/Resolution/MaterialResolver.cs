@@ -270,6 +270,14 @@ namespace AvatarPartAssembler.Editor
     /// The plugin never overwrites a base material. When a policy creates an additional slot it is because the
     /// part genuinely needs one, and the addition is reported as informational so the author can see it.
     /// </para>
+    /// <para>
+    /// <b>Which asset a declared slot names is read from the renderer.</b> A profile's material declaration owns
+    /// the slot's semantic, source submesh, and policy — the layout — while the asset comes from the source
+    /// renderer's own <c>sharedMaterials[SourceSubMesh]</c>, with the declaration's asset used only when the
+    /// renderer has no material there. See <see cref="ResolveSlotMaterial"/>: an installer's material swap is
+    /// therefore honoured by the preview and by the final build alike, and a stale asset in a saved profile cannot
+    /// silently override it.
+    /// </para>
     /// </remarks>
     public static class MaterialResolver
     {
@@ -557,6 +565,12 @@ namespace AvatarPartAssembler.Editor
         /// Builds the source declarations for the base body and every part, in the fixed ordering that makes the
         /// final slot assignment deterministic.
         /// </summary>
+        /// <remarks>
+        /// The declarations come from the captured profile data and the captured renderer materials, and the asset
+        /// each declared slot names is read from those captured renderer materials
+        /// (<see cref="ResolveSlotMaterial"/>). The capture is what the build assembles, so a material replaced on
+        /// the part renderer — including on a prefab instance — is the asset the build uses.
+        /// </remarks>
         public static List<MaterialSemanticSource> CollectSources(ValidationContext context, List<ValidationIssue> issues)
         {
             var sources = new List<MaterialSemanticSource>();
@@ -593,6 +607,109 @@ namespace AvatarPartAssembler.Editor
             return sources;
         }
 
+        /// <summary>
+        /// Builds the source declarations from live renderer and profile state instead of the captured snapshot.
+        /// </summary>
+        /// <param name="context">The captured inputs, which supply the mesh shapes and the part ordering.</param>
+        /// <param name="baseRendererMaterials">
+        /// The target body renderer's <i>current</i> materials, or null to use the captured ones.
+        /// </param>
+        /// <param name="partRendererMaterials">
+        /// Each part renderer's current materials, keyed by part id, or null to use the captured ones.
+        /// </param>
+        /// <param name="partMaterialSemantics">
+        /// Each profile's current material declarations, keyed by part id, or null to use the captured ones. An
+        /// empty list for a part means "the profile declares none", exactly as the captured path reads it.
+        /// </param>
+        /// <param name="issues">Receives the same diagnostics the captured path produces.</param>
+        /// <remarks>
+        /// <para>
+        /// <b>Why a live variant exists.</b> The preview holds an assembled mesh and the material list it was built
+        /// with. Swapping the material in a slot, or editing the asset a profile declares, changes no vertex — so
+        /// the mesh stays valid while the material list does not. This overload rebuilds only the <i>sources</i>,
+        /// from the renderers and profiles as they are right now, so the caller can re-resolve the material list
+        /// without re-capturing a single mesh.
+        /// </para>
+        /// <para>
+        /// The rules are not re-implemented: the sources it produces are the same values the captured path
+        /// produces, and <see cref="Resolve"/> then applies the same semantics, policies, and conflict rules. A
+        /// live re-resolution can therefore never disagree with an assembly over what a layout means — only over
+        /// which assets the layout names.
+        /// </para>
+        /// <para>
+        /// A missing live entry falls back to the captured one. The capture is a moment in time, and a renderer
+        /// that has since been destroyed has no current materials to read; using what was captured is the only
+        /// answer that does not invent a slot.
+        /// </para>
+        /// <para>
+        /// <b>The live renderer materials decide the assets, not only the structure.</b> A declared slot resolves
+        /// its asset through <see cref="ResolveSlotMaterial"/>, so a material swapped into the part renderer's slot
+        /// is applied on the next resolution while the profile's declaration remains the fallback for a slot the
+        /// renderer cannot name. Preview and build therefore read one rule.
+        /// </para>
+        /// </remarks>
+        public static List<MaterialSemanticSource> CollectLiveSources(
+            ValidationContext context,
+            IReadOnlyList<Material> baseRendererMaterials,
+            IReadOnlyDictionary<string, IReadOnlyList<Material>> partRendererMaterials,
+            IReadOnlyDictionary<string, IReadOnlyList<ApaMaterialSlotSemantic>> partMaterialSemantics,
+            List<ValidationIssue> issues)
+        {
+            var sources = new List<MaterialSemanticSource>();
+            if (context == null) return sources;
+
+            if (context.Base != null && context.Base.Mesh != null)
+            {
+                AppendSource(
+                    sources,
+                    context.Base.Mesh,
+                    context.Base.ExpectedMaterialSemantics,
+                    baseRendererMaterials ?? context.Base.RendererMaterials,
+                    string.Empty,
+                    issues);
+            }
+
+            var parts = ValidationContext.SortParts(context.Parts);
+
+            for (var i = 0; i < parts.Count; i++)
+            {
+                var part = parts[i];
+                if (part?.Mesh == null) continue;
+
+                sources.AddRange(BuildPartSources(part, partRendererMaterials, partMaterialSemantics, issues));
+            }
+
+            return sources;
+        }
+
+        /// <summary>One part's live declarations, falling back to the captured ones field by field.</summary>
+        private static List<MaterialSemanticSource> BuildPartSources(
+            PartSnapshot part,
+            IReadOnlyDictionary<string, IReadOnlyList<Material>> partRendererMaterials,
+            IReadOnlyDictionary<string, IReadOnlyList<ApaMaterialSlotSemantic>> partMaterialSemantics,
+            List<ValidationIssue> issues)
+        {
+            var materials = part.RendererMaterials;
+            if (partRendererMaterials != null
+                && partRendererMaterials.TryGetValue(part.PartId, out var liveMaterials)
+                && liveMaterials != null)
+            {
+                materials = liveMaterials;
+            }
+
+            var semantics = part.MaterialSemantics;
+            if (partMaterialSemantics != null
+                && partMaterialSemantics.TryGetValue(part.PartId, out var liveSemantics)
+                && liveSemantics != null)
+            {
+                semantics = liveSemantics;
+            }
+
+            var sources = new List<MaterialSemanticSource>();
+            AppendSource(sources, part.Mesh, semantics, materials, part.PartId, issues);
+            return sources;
+        }
+
         private static void AppendSource(
             List<MaterialSemanticSource> sources,
             MeshSnapshot mesh,
@@ -610,7 +727,7 @@ namespace AvatarPartAssembler.Editor
                     sources.Add(new MaterialSemanticSource(
                         entry.Semantic,
                         entry.SourceSubMesh,
-                        entry.Material,
+                        ResolveSlotMaterial(entry, rendererMaterials),
                         partId,
                         entry.Policy));
                 }
@@ -625,10 +742,59 @@ namespace AvatarPartAssembler.Editor
             var subMeshCount = mesh.SubMeshCount;
             for (var i = 0; i < subMeshCount; i++)
             {
-                Material material = i < rendererMaterials.Count ? rendererMaterials[i] : null;
+                Material material = rendererMaterials != null && i < rendererMaterials.Count
+                    ? rendererMaterials[i]
+                    : null;
                 var semantic = material != null ? material.name : "SubMesh" + i;
                 sources.Add(new MaterialSemanticSource(semantic, i, material, partId, ApaMaterialPolicyMode.Auto));
             }
+        }
+
+        /// <summary>
+        /// The material a declared slot actually uses: the source renderer's own slot, with the profile's declared
+        /// asset as the fallback for a slot that does not exist or names nothing.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>The renderer slot is the current material asset; the profile entry is the authoring default.</b> A
+        /// declaration owns a slot's <i>semantic</i>, its <i>source submesh</i>, and its <i>conflict policy</i> —
+        /// everything that decides where geometry goes and how it merges. The asset behind the slot is not a
+        /// property of the layout: an installer who replaces the material in the part renderer's slot (on a prefab
+        /// instance, or on the prefab asset itself) is expressing exactly the intent a material swap expresses,
+        /// and a profile saved months earlier must not silently override it. Reading the renderer here is what
+        /// makes the preview and the final NDMF build agree on which asset a slot names.
+        /// </para>
+        /// <para>
+        /// <b>The fallback is narrow on purpose.</b> Only a slot the renderer does not have — an index beyond its
+        /// <c>sharedMaterials</c>, or a null array — or one that holds no material at all falls back to
+        /// <see cref="ApaMaterialSlotSemantic.Material"/>. Those are the cases where the renderer cannot name an
+        /// asset, so the profile's declaration is the only statement about the slot that exists. This keeps a
+        /// profile that declares materials for a renderer whose slots were never filled working exactly as before.
+        /// </para>
+        /// <para>
+        /// Nothing is written: the returned reference is the author's own asset, and no declaration, renderer, or
+        /// profile field is modified.
+        /// </para>
+        /// </remarks>
+        public static Material ResolveSlotMaterial(
+            ApaMaterialSlotSemantic declaration,
+            IReadOnlyList<Material> rendererMaterials)
+        {
+            if (declaration == null) return null;
+
+            return TryReadSlot(rendererMaterials, declaration.SourceSubMesh, out var slot)
+                ? slot
+                : declaration.Material;
+        }
+
+        /// <summary>True when the renderer has a slot at the index that names a material.</summary>
+        private static bool TryReadSlot(IReadOnlyList<Material> materials, int index, out Material material)
+        {
+            material = null;
+            if (materials == null || index < 0 || index >= materials.Count) return false;
+
+            material = materials[index];
+            return material != null;
         }
     }
 }

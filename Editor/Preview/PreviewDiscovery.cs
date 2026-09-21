@@ -85,6 +85,37 @@ namespace AvatarPartAssembler.Editor.Preview
         /// </summary>
         public string StructuralKey { get; }
 
+        private string _geometryFingerprint;
+
+        /// <summary>
+        /// Fingerprint of everything in <see cref="Context"/> that decides the assembled <i>geometry</i>, with
+        /// material identities excluded.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Computed lazily and cached: the answer is only needed when a node's full fingerprint no longer matches
+        /// the live inputs, which is the moment the node has to decide between "reapply materials" and "rebuild the
+        /// mesh". A request that is never refreshed never pays for it.
+        /// </para>
+        /// <para>
+        /// It is not a cache key and not an identity. Two requests with the same geometry fingerprint can still
+        /// produce different pictures — that is the entire point — so it is only ever compared for equality by a
+        /// node that already holds a generated mesh for its own request.
+        /// </para>
+        /// </remarks>
+        public string GeometryFingerprint
+        {
+            get
+            {
+                if (_geometryFingerprint != null) return _geometryFingerprint;
+
+                _geometryFingerprint = Context == null
+                    ? ApaPreviewFingerprint.UncachedMarker
+                    : ApaPreviewFingerprint.OfGeometryContext(Context) + "|group=" + GroupKey;
+                return _geometryFingerprint;
+            }
+        }
+
         /// <summary>The group's resolved target renderer, or null when it could not be resolved.</summary>
         public Renderer TargetRenderer { get; }
 
@@ -618,6 +649,18 @@ namespace AvatarPartAssembler.Editor.Preview
                     builder.Add(installer.EnabledForBuild);
                     builder.AddObjectIdentity(installer.Profile);
                     builder.AddObjectIdentity(installer.TargetRendererObject);
+
+                    // A protected part's geometry is the payload, and a payload can be replaced in place: the
+                    // asset keeps its instance id and its GUID, so an identity check alone would let a replaced
+                    // payload look unchanged. The content identity is what makes "the payload was rewritten"
+                    // refresh the preview, exactly as a mesh edit would for an ordinary part. It is the same
+                    // identity the decode cache keys on, so the refresh and the cache can never disagree about
+                    // whether the bytes changed.
+                    builder.AddObjectIdentity(installer.ProtectedMesh);
+                    if (installer.ProtectedMesh != null)
+                    {
+                        builder.Add(ApaProtectedMeshCache.ContentIdentityOf(installer.ProtectedMesh));
+                    }
 
                     var partRoot = installer.ResolvePartRoot();
                     builder.AddObjectIdentity(partRoot);

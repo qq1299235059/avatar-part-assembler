@@ -257,6 +257,55 @@ namespace AvatarPartAssembler.Tests.Authoring
             CollectionAssert.AreEqual(first.UnmatchedPartIndices, second.UnmatchedPartIndices);
         }
 
+        /// <summary>
+        /// The reported regression, in one test: the classification is bind-pose data, while the discs that show
+        /// it must follow the pose. Moving a bone therefore changes <i>where</i> the overlay draws and not
+        /// <i>what</i> it says — a pairing derived from a posed body would rewrite the seam the moment the author
+        /// dragged a bone.
+        /// </summary>
+        [Test]
+        public void Evaluate_KeepsTheBindPoseClassificationWhileTheDisplayedPositionsFollowThePose()
+        {
+            var target = NewBody(new[] { Vector3.zero, new Vector3(1f, 0f, 0f), new Vector3(9f, 9f, 9f) });
+            var part = NewPart(new[] { Vector3.zero, new Vector3(5f, 5f, 5f) });
+
+            var bone = new GameObject("Hips");
+            _created.Add(bone);
+            bone.transform.position = new Vector3(0f, 1f, 0f);
+
+            part.Renderer.bones = new[] { bone.transform };
+            part.Mesh.boneWeights = new[]
+            {
+                new BoneWeight { boneIndex0 = 0, weight0 = 1f },
+                new BoneWeight { boneIndex0 = 0, weight0 = 1f }
+            };
+            part.Mesh.bindposes = new[] { Matrix4x4.identity };
+
+            var before = Evaluate(target, part);
+
+            Assert.IsTrue(
+                ApaPreviewSkinning.TrySolveLocalPositions(part.Renderer, part.Mesh, out var rest),
+                "The overlay's positions come from the renderer's current pose.");
+            Assert.AreEqual(new Vector3(0f, 1f, 0f), rest[0]);
+
+            // A pose edit: the bone moves, and with it every vertex the overlay draws.
+            bone.transform.position = new Vector3(0f, 4f, 0f);
+            Assert.IsTrue(ApaPreviewSkinning.TrySolveLocalPositions(part.Renderer, part.Mesh, out var posed));
+            Assert.AreEqual(new Vector3(0f, 4f, 0f), posed[0]);
+            Assert.AreNotEqual(rest[0], posed[0], "A moved bone must move the disc.");
+
+            var after = Evaluate(target, part);
+
+            CollectionAssert.AreEqual(
+                before.MatchedTargetIndices,
+                after.MatchedTargetIndices,
+                "The pairing is decided on the bind pose and must not follow the bone.");
+            CollectionAssert.AreEqual(before.MatchedPartIndices, after.MatchedPartIndices);
+            CollectionAssert.AreEqual(before.UnmatchedPartIndices, after.UnmatchedPartIndices);
+            Assert.AreEqual(before.PairCount, after.PairCount);
+            Assert.IsNull(after.MatchIssue);
+        }
+
         // ---- Nothing is written ------------------------------------------------------------------------
 
         [Test]

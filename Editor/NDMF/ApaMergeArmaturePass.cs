@@ -113,6 +113,26 @@ namespace AvatarPartAssembler.Editor.Ndmf
             ApaNdmfDiagnostics.Report(issues, references);
         }
 
+        /// <summary>
+        /// Checks the profile's recorded part-mesh fingerprint against the geometry this build will actually merge.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>A protected part is checked against its payload, not against a mesh it does not have.</b> The
+        /// prefab's renderer carries no serialized mesh, so fingerprinting "the renderer's mesh" would answer
+        /// "no mesh" and report a mismatch against a perfectly good part. The payload is the authoritative
+        /// geometry for a protected part — it was captured from the source mesh through the same
+        /// <see cref="MeshSnapshotFactory"/> contract the profile recorded — so the decoded snapshot is what the
+        /// profile is compared against. The decode is shared with the hydration pass and the assembly capture
+        /// through <see cref="ApaProtectedMeshCache"/>, so this check costs no extra decryption.
+        /// </para>
+        /// <para>
+        /// <b>A payload that cannot be decoded is not reported here.</b> The hydration pass reports that failure
+        /// once, with the codec's own <c>APA053</c> diagnostic, and the assembly pass reports it if the hydration
+        /// pass never ran. Adding a second, weaker fingerprint message for the same condition would only make the
+        /// report name two causes for one problem.
+        /// </para>
+        /// </remarks>
         private static bool ValidatePartMeshBeforeMerge(
             AvatarPartInstaller installer,
             GameObject partRoot,
@@ -121,6 +141,22 @@ namespace AvatarPartAssembler.Editor.Ndmf
         {
             var profile = installer != null ? installer.Profile : null;
             if (profile == null || !profile.HasPartMeshFingerprint) return true;
+
+            if (installer.HasProtectedMesh)
+            {
+                if (!ApaProtectedMeshCache.TryDecode(
+                        installer.ProtectedMesh, partId, out var protectedData, out _))
+                {
+                    // Reported by the hydration pass (or by the assembly pass when that pass did not run).
+                    return true;
+                }
+
+                return CompatibilityRule.ValidatePartMeshFingerprint(
+                    partId,
+                    profile.PartMeshFingerprint,
+                    ApaMeshFingerprint.OfSnapshot(protectedData.CreateSnapshot()),
+                    issues);
+            }
 
             var renderer = partRoot != null ? partRoot.GetComponentInChildren<Renderer>(true) : null;
             var mesh = renderer is SkinnedMeshRenderer skinned

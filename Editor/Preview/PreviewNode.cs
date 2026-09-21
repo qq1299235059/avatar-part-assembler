@@ -59,13 +59,23 @@ namespace AvatarPartAssembler.Editor.Preview
         private readonly ApaNumericPolicy _policy;
         private readonly IReadOnlyList<AvatarPartInstaller> _allInstallers;
         private readonly IReadOnlyList<Renderer> _consumedRenderers;
-        private readonly string _fingerprint;
+        private string _fingerprint;
+        private readonly string _geometryFingerprint;
         private readonly string _structuralKey;
         private readonly ApaPreviewLease _lease;
         private readonly ApaPreviewBoneMap _boneMap;
         private readonly IReadOnlyList<ApaPreviewBlendShapeBinding> _shapeBindings;
         private readonly ApaPreviewDebugData _debugData;
         private readonly List<GameObject> _shadowObjects;
+
+        /// <summary>
+        /// The material list this node applies, re-resolved from the live renderers and profiles on every frame.
+        /// </summary>
+        /// <remarks>
+        /// Replaced when a refresh proves the geometry is still current but the materials are not, so the node
+        /// starts reading the same inputs the live request describes.
+        /// </remarks>
+        private ApaPreviewLiveMaterials _liveMaterials;
 
         /// <summary>
         /// The request this node was built from. It is kept for one purpose: a node that fails later can hand it to
@@ -101,6 +111,7 @@ namespace AvatarPartAssembler.Editor.Preview
         private ApaPreviewNode(
             ApaPreviewRequest request,
             ApaPreviewLease lease,
+            ApaPreviewLiveMaterials liveMaterials,
             ApaPreviewBoneMap boneMap,
             IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings,
             ApaPreviewDebugData debugData,
@@ -115,6 +126,7 @@ namespace AvatarPartAssembler.Editor.Preview
             _consumedRenderers = request.ConsumedRenderers;
             _request = request;
             _fingerprint = request.Fingerprint;
+            _geometryFingerprint = request.GeometryFingerprint;
             _structuralKey = request.StructuralKey;
             _lease = lease;
             _boneMap = boneMap ?? ApaPreviewBoneMap.Empty;
@@ -122,6 +134,15 @@ namespace AvatarPartAssembler.Editor.Preview
             _debugData = debugData;
             _cannotRepresent = cannotRepresent;
             _shadowObjects = shadowObjects != null ? shadowObjects : new List<GameObject>();
+
+            // The materials are resolved from the live renderers rather than taken from the lease: the mesh is
+            // cached and may be minutes old, while a material swap or a profile edit must be in the picture on the
+            // next frame. The plan and the captured context stay the reference for the slot structure.
+            _liveMaterials = liveMaterials ?? ApaPreviewLiveMaterials.Create(
+                _lease != null ? _lease.Plan : null,
+                request.Context,
+                _targetRenderer,
+                _allInstallers);
 
             WhatChanged = RenderAspects.Mesh | RenderAspects.Material | RenderAspects.Shapes;
         }
@@ -150,6 +171,7 @@ namespace AvatarPartAssembler.Editor.Preview
             }
 
             ApaPreviewLease lease = null;
+            ApaPreviewLiveMaterials liveMaterials = null;
             List<GameObject> shadowObjects = new List<GameObject>();
             try
             {
@@ -173,7 +195,12 @@ namespace AvatarPartAssembler.Editor.Preview
                     shapeBindings = ApaPreviewBlendShapeMap.Build(lease.Plan, request.TargetRenderer, partRenderers);
 
                     ReportUnresolvedBones(request, boneMap);
-                    ReportMaterialMismatch(request, lease);
+
+                    // The material report and the node both read the live material list, so the count the author
+                    // is told about is the count the proxy will actually be given.
+                    liveMaterials = ApaPreviewLiveMaterials.Create(
+                        lease.Plan, request.Context, request.TargetRenderer, request.AllInstallers);
+                    ReportMaterialMismatch(request, lease, liveMaterials.Resolve());
 
                     // A skinned result cannot be shown on a non-skinned target: a MeshRenderer has no bones and no
                     // bind poses, so the assembled mesh would render in rest pose while the build would not. The
@@ -192,7 +219,7 @@ namespace AvatarPartAssembler.Editor.Preview
                 var debugData = ApaPreviewDebugData.Create(request, lease.Plan, lease.Issues, boneMap);
 
                 var node = new ApaPreviewNode(
-                    request, lease, boneMap, shapeBindings, debugData, cannotRepresent, shadowObjects);
+                    request, lease, liveMaterials, boneMap, shapeBindings, debugData, cannotRepresent, shadowObjects);
 
                 if (debugData != null) ApaPreviewDebugOverlay.Register(request.TargetRenderer, debugData);
 
@@ -260,11 +287,16 @@ namespace AvatarPartAssembler.Editor.Preview
                 false));
         }
 
-        private static void ReportMaterialMismatch(ApaPreviewRequest request, ApaPreviewLease lease)
+        private static void ReportMaterialMismatch(
+            ApaPreviewRequest request,
+            ApaPreviewLease lease,
+            Material[] materials)
         {
             var mesh = lease.Mesh;
             if (mesh == null) return;
-            if (lease.Materials.Length == 0 || lease.Materials.Length == mesh.subMeshCount) return;
+
+            var count = materials != null ? materials.Length : 0;
+            if (count == 0 || count == mesh.subMeshCount) return;
 
             ApaPreviewDiagnostics.Report(ApaPreviewDiagnostics.Build(
                 request.DiagnosticKey,
@@ -274,7 +306,7 @@ namespace AvatarPartAssembler.Editor.Preview
                 request.Issues,
                 new[]
                 {
-                    "The assembly produced " + lease.Materials.Length + " material(s) for " +
+                    "The assembly produced " + count + " material(s) for " +
                     mesh.subMeshCount + " submesh(es); the material list was not applied."
                 },
                 false));
@@ -351,7 +383,7 @@ namespace AvatarPartAssembler.Editor.Preview
             ApaPreviewProxyApplier.Apply(
                 proxy,
                 _lease.Mesh,
-                _lease.Materials,
+                _liveMaterials != null ? _liveMaterials.Resolve() : _lease.Materials,
                 _boneMap,
                 _shapeBindings);
         }
@@ -459,6 +491,26 @@ namespace AvatarPartAssembler.Editor.Preview
                     // Nothing that reaches the output changed, so there is nothing to rebuild and nothing to
                     // report to downstream nodes.
                     WhatChanged = 0;
+                    return this;
+                }
+
+                // A change that only replaced material assets — a swapped slot, a profile declaration pointed at
+                // another material — leaves every vertex and every submesh where they were. The geometry
+                // fingerprint excludes material identities and includes the resolved slot structure, so an equal
+                // value proves the mesh this node holds is still the mesh the live inputs describe, and only the
+                // material list has to be reapplied. Rebuilding here would re-capture, re-assemble, and (for a
+                // protected part) re-decrypt a payload for a change that touched no geometry.
+                if (live != null && live.IsRenderable &&
+                    string.Equals(live.GeometryFingerprint, _geometryFingerprint, StringComparison.Ordinal))
+                {
+                    _liveMaterials = ApaPreviewLiveMaterials.Create(
+                        _lease.Plan, live.Context, live.TargetRenderer, live.Installers);
+
+                    // The node now draws the live inputs, so it adopts their fingerprint: keeping the stale one
+                    // would make every later refresh repeat the two full content hashes that got us here.
+                    _fingerprint = live.Fingerprint;
+
+                    WhatChanged = RenderAspects.Material;
                     return this;
                 }
 

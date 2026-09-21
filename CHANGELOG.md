@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.5.0] — protected part meshes, live preview materials
+
+- **Optional protected part mesh mode.** `Create Part Prefab` gains a protection toggle, off by default. When it
+  is on, the part mesh is serialized into an APA-owned `ApaProtectedMeshAsset` beside the prefab as an
+  authenticated, encrypted, versioned binary payload (`AES-256-CBC` + PKCS#7, encrypt-then-MAC with
+  `HMAC-SHA256`, PBKDF2-SHA256 key derivation from a package-local secret, the stable part id, and a per-asset
+  random salt), the installer references that asset, and the saved prefab's part renderer is written with **no
+  mesh**. The prefab therefore has no dependency on the source mesh or its model file. Creation refuses — and
+  rolls back both files — when any other component still keeps the source mesh or its `.fbx` in the dependency
+  graph, and it verifies on the written prefab that the installer really carries the payload reference. That
+  reference is compared as a Unity asset — its path, plus native identity while the written instance is alive —
+  so a save or reload that hands out a second wrapper for the same asset is not mistaken for a mismatch, and a
+  reference to a different payload still fails closed.
+- **One decode path, in memory only.** Preview, authoring overlays, and the NDMF build all decode through
+  `ApaProtectedMeshCache`, keyed by the payload's content identity, so a protected part is decrypted once per
+  unchanged payload and never per frame. The NDMF Generating phase restores the geometry as a
+  `HideAndDontSave` transient mesh **before** Modular Avatar and the merge-armature pass read the renderer's
+  weights; the assembly pass releases it in a `finally` and an Optimizing-phase pass sweeps anything an aborted
+  build left behind. No decrypted mesh, FBX, or mesh asset is ever written to the project.
+- **`APA053 PROTECTED_MESH_INVALID` and `APA054 PROTECTED_MESH_SOURCE_LEAK`.** A payload that is missing,
+  truncated, tampered with, written for another part, or of an unsupported version/format fails closed with
+  `APA053` and a stable `reason=` token; a protected prefab that would still depend on the source mesh is
+  refused with `APA054`. The unprotected path never enters the codec at all.
+- **`APA006` no longer misreports a protected part.** Every path that validates a part renderer — the context
+  builder, the preview discovery pass, the armature/fingerprint gate, and the authoring selection — accepts a
+  mesh-less renderer when the installer carries a payload that decodes, and the authoring overlays (seam
+  candidates, merge check, UV/material inference) compute their geometry from the decoded payload without
+  assigning anything to the scene. A truly unprotected mesh-less part still reports `APA006`, now with an
+  actionable message and a `reason=missing-part-mesh` token.
+- **Preview materials follow the live state.** A node keeps its cached assembled geometry and re-resolves the
+  material list from the current renderer `sharedMaterials` and the current profile material declarations on
+  every frame, through the same resolver the assembly uses. Swapping a material in a slot is visible on the next
+  frame; editing a referenced material asset is visible immediately because the preview holds the author's own
+  asset and never clones one. A geometry-only fingerprint decides whether a change needs a rebuild, so a
+  material-only change reuses the cached mesh (and never re-decrypts a protected payload).
+- **A material declaration no longer pins the asset behind its slot.** A profile's material semantics row still
+  decides the semantic name, the source submesh, and the conflict policy, but the material itself is read from the
+  source renderer's `sharedMaterials[SourceSubMesh]` — preview, assembly plan, and NDMF build all use that one
+  rule, so replacing a material on the part renderer (including on a prefab instance) is what the build uses, and
+  the replacement is never written back into the profile. The profile's asset is the fallback for a slot the
+  renderer does not have or that holds no material, which keeps a part whose materials live in the profile
+  working unchanged.
+- **Scene View overlays draw at the pose the renderer actually shows.** The candidate, merge-check, stored-seam,
+  and removal overlays all read the renderer's current evaluated positions through `ApaPreviewPositionCache`
+  instead of the mesh's rest-pose `vertices`, and a `SkinnedMeshRenderer` is now evaluated even when every
+  blend-shape weight is zero — a moved bone is enough to separate the drawn geometry from the bind pose, which is
+  the reported "the discs do not sit on the mesh" defect. The cache is keyed on the pose and the weights, so an
+  unchanged repaint reuses the array instead of re-baking it. What an overlay *names* is untouched: candidate
+  indices, the merge-check classification, and the stored seam pairs remain bind-pose data, and seam generation
+  and the build still read the rest pose.
+- **A protected part's overlays follow its pose too.** The prefab's renderer holds no mesh, so the pose is solved
+  in memory from the decoded payload's bind poses and weights and the renderer's bones
+  (`ApaPreviewSkinning`), in the renderer's own local space — the same space a live `BakeMesh` and the mesh's
+  rest-pose `vertices` are in, so a scaled renderer's discs still land on the surface — and the decoded mesh is
+  still never assigned to the scene renderer, never saved, and destroyed with the preview session. The live bake
+  now includes the transform's scale for the same reason. Because the evaluated positions are local to the
+  renderer, the cache is keyed on the renderer's own transform as well as on its bones and weights: a renderer
+  moved or scaled on its own is re-solved instead of being drawn from the previous space. The cache also reads
+  blend-shape weights only from a renderer that holds the mesh: a protected renderer holds none, so its key is
+  the bone pose plus a "no weights" marker, and `GetBlendShapeWeight` — whose index Unity defines against the mesh
+  attached to the renderer — is never called in that state.
+- Package version 0.5.0. New tests cover the codec round-trip and authentication, the payload bounds, transient
+  hydration and lease cleanup, protected prefab creation and refusal paths, protected context/preview/authoring
+  acceptance, the live material refresh and the renderer-slot material precedence rule, the pose-keyed
+  evaluated-position cache, the merge-check classification/display separation, and the protected pose solver.
+
 ## [0.4.0] — vertex-color seam candidates, explicit overlays, mask-only removal
 
 This release publishes [0.3.0-rc.10], [0.3.0-rc.11], and [0.3.0-rc.12] together.
