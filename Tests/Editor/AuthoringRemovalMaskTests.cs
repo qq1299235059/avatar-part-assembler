@@ -7,13 +7,14 @@ using UnityEngine;
 namespace AvatarPartAssembler.Tests.Authoring
 {
     /// <summary>
-    /// Tests for the editable removal set: canonical ordering, duplicate reporting, and the structural checks
-    /// that give the picker live feedback.
+    /// Tests for the removal set: canonical ordering, duplicate reporting, whole-set replacement, and the
+    /// structural checks that give the mask block live feedback.
     /// </summary>
     /// <remarks>
     /// The structural checks are asserted against the same codes and detail tokens the assembly core's
     /// <c>RemovalRule</c> emits, because the authoring layer is only allowed to say the same thing earlier — not
-    /// to say something different.
+    /// to say something different. The per-triangle toggle, the submesh bulk delete, and the address-list parser
+    /// are gone with mask-only authoring, so nothing here drives them any more.
     /// </remarks>
     public sealed class AuthoringRemovalMaskTests
     {
@@ -55,7 +56,7 @@ namespace AvatarPartAssembler.Tests.Authoring
         }
 
         [Test]
-        public void RemoveToggleAndRemoveSubMeshBehaveOnTheCanonicalSet()
+        public void RemoveAndClearBehaveOnTheCanonicalSet()
         {
             var mask = new ApaRemovalMask();
             mask.AddRange(new[]
@@ -67,16 +68,38 @@ namespace AvatarPartAssembler.Tests.Authoring
 
             Assert.IsTrue(mask.Remove(new RemovedTriangleAddress(0, 1)));
             Assert.IsFalse(mask.Remove(new RemovedTriangleAddress(0, 1)));
-
-            Assert.IsTrue(mask.Toggle(new RemovedTriangleAddress(1, 4)), "Toggling an absent address selects it.");
-            Assert.IsFalse(mask.Toggle(new RemovedTriangleAddress(1, 4)), "Toggling a present address removes it.");
-
-            Assert.AreEqual(1, mask.RemoveSubMesh(0));
-            Assert.AreEqual(1, mask.Count);
-            Assert.AreEqual(new RemovedTriangleAddress(1, 1), mask.GetAddress(0));
+            Assert.AreEqual(2, mask.Count);
 
             mask.Clear();
             Assert.IsTrue(mask.IsEmpty);
+        }
+
+        [Test]
+        public void SetFromAddresses_ReplacesTheWholeSetCanonically()
+        {
+            // The mask's Apply action writes through this: a Replace is one whole-set edit, and the canonical
+            // invariant (sorted, duplicate-free, parallel arrays) has to hold for whatever the sampler produced.
+            var mask = new ApaRemovalMask();
+            mask.AddRange(new[]
+            {
+                new RemovedTriangleAddress(0, 1),
+                new RemovedTriangleAddress(1, 4)
+            }, null);
+
+            mask.SetFromAddresses(new[]
+            {
+                new RemovedTriangleAddress(2, 7),
+                new RemovedTriangleAddress(0, 3),
+                new RemovedTriangleAddress(2, 7)
+            });
+
+            Assert.AreEqual(2, mask.Count);
+            Assert.AreEqual(new RemovedTriangleAddress(0, 3), mask.GetAddress(0));
+            Assert.AreEqual(new RemovedTriangleAddress(2, 7), mask.GetAddress(1));
+            Assert.IsFalse(
+                mask.Contains(new RemovedTriangleAddress(1, 4)),
+                "A replace is a replacement, not a merge.");
+            Assert.IsFalse(mask.HasCorruptStorage);
         }
 
         [Test]
@@ -178,53 +201,94 @@ namespace AvatarPartAssembler.Tests.Authoring
             Assert.AreEqual("3 triangle(s) in 2 submesh(es)", mask.Describe());
         }
 
+        // ---- Mask-only authoring -----------------------------------------------------------------------
+
         [Test]
-        public void TryParseAddressList_ParsesSingleAddressesListsAndRanges()
+        public void RemovalRegion_KeepsOnlyTheMaskInputsAndTheGeneratedSelectionReview()
         {
-            Assert.IsTrue(ApaRemovalMask.TryParseAddressList("0:12", out var single, out var error), error);
-            Assert.AreEqual(1, single.Length);
-            Assert.AreEqual(new RemovedTriangleAddress(0, 12), single[0]);
+            var window = ReadEditorSource("Authoring", "ApaAuthoringWindow.cs");
 
-            Assert.IsTrue(ApaRemovalMask.TryParseAddressList("0:12, 1:3; 2:0", out var list, out error), error);
-            Assert.AreEqual(3, list.Length);
+            var region = Between(
+                window,
+                "private void DrawRemovalSection()",
+                "private void DrawTextureMaskSection(");
 
-            Assert.IsTrue(ApaRemovalMask.TryParseAddressList("1:4-7", out var range, out error), error);
-            Assert.AreEqual(4, range.Length);
-            Assert.AreEqual(new RemovedTriangleAddress(1, 4), range[0]);
-            Assert.AreEqual(new RemovedTriangleAddress(1, 7), range[3]);
+            StringAssert.Contains("DrawTextureMaskSection(mask);", region, "The mask inputs are the authoring surface.");
+            StringAssert.Contains("DrawAddressList(mask);", region, "The generated selection is still reviewable.");
+            StringAssert.Contains("mask.Describe()", region, "The summary line stays.");
+            StringAssert.Contains("Clear", region, "The whole-set clear stays: it is not a per-triangle edit.");
+
+            foreach (var gone in new[]
+                     {
+                         "DrawModeButton",
+                         "Pick Triangles",
+                         "Add Address",
+                         "Add List",
+                         "Remove All In Submesh",
+                         "IntField",
+                         "TextField"
+                     })
+            {
+                Assert.IsFalse(
+                    region.Contains(gone),
+                    "The Removal Region must carry no manual triangle or address entry UI: " + gone);
+            }
         }
 
         [Test]
-        public void TryParseAddressList_PreservesDuplicatesForValidationToReport()
+        public void RemovalAddressList_IsAReadOnlyReview()
         {
-            Assert.IsTrue(ApaRemovalMask.TryParseAddressList("0:1, 0:1", out var parsed, out var error), error);
-            Assert.AreEqual(2, parsed.Length, "Author input is preserved; duplicates are reported, not collapsed.");
+            var window = ReadEditorSource("Authoring", "ApaAuthoringWindow.cs");
+            var list = Between(window, "private void DrawAddressList(", "// ---- Actions");
+
+            StringAssert.Contains("mask.GetAddress(i)", list);
+            Assert.IsFalse(list.Contains("mask.Remove("), "No per-triangle remove control may remain.");
+            Assert.IsFalse(list.Contains("Add Address"), "The list is a review, not an editing surface.");
+            Assert.IsFalse(list.Contains("Add List"), "The list is a review, not an editing surface.");
+            Assert.IsFalse(list.Contains("Remove All In Submesh"), "The list is a review, not an editing surface.");
         }
 
         [Test]
-        public void TryParseAddressList_ReportsStableErrors()
+        public void TheManualEditingBackendIsGone()
         {
-            Assert.IsFalse(ApaRemovalMask.TryParseAddressList("012", out _, out var malformed));
-            Assert.AreEqual("malformed:012", malformed);
+            var mask = ReadEditorSource("Authoring", "ApaRemovalMask.cs");
 
-            Assert.IsFalse(ApaRemovalMask.TryParseAddressList("0:x", out _, out var notANumber));
-            Assert.AreEqual("malformed:0:x", notANumber);
+            Assert.IsFalse(mask.Contains("TryParseAddressList"), "The address text field's parser is gone with it.");
+            Assert.IsFalse(mask.Contains("RemoveSubMesh"), "The submesh bulk delete is gone with its button.");
+            Assert.IsFalse(mask.Contains("public bool Toggle("), "The per-triangle toggle served the pick mode only.");
 
-            Assert.IsFalse(ApaRemovalMask.TryParseAddressList("0:7-3", out _, out var reversed));
-            Assert.AreEqual("invalid-range:0:7-3", reversed);
-
-            Assert.IsFalse(ApaRemovalMask.TryParseAddressList("0:0-200000", out _, out var huge));
-            StringAssert.StartsWith("too-large:", huge);
+            // The picking helper and its budgets were the click path's; the array cache the overlays read stayed.
+            var authoring = PackageEditorPath("Authoring");
+            Assert.IsFalse(
+                System.IO.File.Exists(System.IO.Path.Combine(authoring, "ApaScenePicking.cs")),
+                "The Scene View picking helper is removed, not left as dead code.");
+            Assert.IsTrue(System.IO.File.Exists(System.IO.Path.Combine(authoring, "ApaMeshArrayCache.cs")));
         }
 
-        [Test]
-        public void TryParseAddressList_TreatsEmptyInputAsAnEmptySelection()
+        private static string Between(string source, string startToken, string endToken)
         {
-            Assert.IsTrue(ApaRemovalMask.TryParseAddressList(null, out var none, out var error), error);
-            Assert.IsEmpty(none);
+            var start = source.IndexOf(startToken, System.StringComparison.Ordinal);
+            Assert.GreaterOrEqual(start, 0, "Missing member: " + startToken);
 
-            Assert.IsTrue(ApaRemovalMask.TryParseAddressList("   ", out var blank, out error), error);
-            Assert.IsEmpty(blank);
+            var end = source.IndexOf(endToken, start, System.StringComparison.Ordinal);
+            Assert.Greater(end, start, "Missing end marker: " + endToken);
+
+            return source.Substring(start, end - start);
+        }
+
+        private static string ReadEditorSource(string folder, string fileName)
+        {
+            var path = System.IO.Path.Combine(PackageEditorPath(folder), fileName);
+            if (!System.IO.File.Exists(path)) Assert.Ignore("Editor source not found: " + path);
+
+            return System.IO.File.ReadAllText(path);
+        }
+
+        private static string PackageEditorPath(string folder)
+        {
+            var projectRoot = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(UnityEngine.Application.dataPath, ".."));
+            return System.IO.Path.Combine(projectRoot, "Packages", "dev.avatar-part-assembler", "Editor", folder);
         }
 
         private static int CountCode(List<ValidationIssue> issues, string code)

@@ -43,11 +43,20 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// authoring-layer codes rather than assembly codes.
     /// </description></item>
     /// <item><description>
-    /// <b>APA051</b> — the named <c>merge vertex</c> group of a renderer cannot be resolved into candidate
-    /// vertices: no group is declared, the <c>ApaMergeVertexGroup</c> component lists no index, the group's bone
-    /// weights no vertex positively, two bones share the name, or the listed indices cannot address the mesh.
-    /// The group is an authoring input too — the build consumes the seam pairs the generator writes — and every
-    /// one of those conditions has the same forbidden alternative, which is pairing every vertex instead.
+    /// <b>APA052</b> — the vertex-color seam candidate contract of a renderer cannot be resolved into candidate
+    /// vertices: the mesh carries no vertex color, its color array does not have exactly one entry per vertex, or
+    /// no vertex carries the selected candidate color. The candidate color is an authoring input too — the build
+    /// consumes the seam pairs the generator writes — and every one of those conditions has the same forbidden
+    /// alternative, which is pairing every vertex instead.
+    /// </description></item>
+    /// <item><description>
+    /// <b>APA051 (retired)</b> — the named <c>merge vertex</c> group of a renderer could not be resolved into
+    /// candidate vertices: no group was declared, the <c>ApaMergeVertexGroup</c> component listed no index, the
+    /// group's bone weighted no vertex positively, two bones shared the name, or the listed indices could not
+    /// address the mesh. The named-group representation was replaced by the vertex-color contract in M14, so this
+    /// build never emits the code; it stays allocated, and its meaning and title are unchanged, because a retired
+    /// code must never be reused for a different condition. Its alias below is kept so an old log or an old
+    /// assertion still reads the right name.
     /// </description></item>
     /// </list>
     /// <para>
@@ -81,8 +90,16 @@ namespace AvatarPartAssembler.Editor.Authoring
         public const string RemovalMaskTextureFailed = ApaErrorCode.RemovalMaskTextureFailed;
 
         /// <summary>
-        /// The named <c>merge vertex</c> group of a renderer cannot be resolved into candidate vertices. Alias
-        /// of <see cref="ApaErrorCode.MergeVertexGroupInvalid"/>.
+        /// The vertex-color seam candidate contract of a renderer cannot be resolved into candidate vertices.
+        /// Alias of <see cref="ApaErrorCode.SeamCandidateColorInvalid"/>.
+        /// </summary>
+        public const string SeamCandidateColorInvalid = ApaErrorCode.SeamCandidateColorInvalid;
+
+        /// <summary>
+        /// The named <c>merge vertex</c> group of a renderer cannot be resolved into candidate vertices.
+        /// <b>Retired</b> by the vertex-color candidate contract: this build never emits it, and the alias is kept
+        /// only so an old log, profile, or assertion still resolves the code's name and title. Alias of
+        /// <see cref="ApaErrorCode.MergeVertexGroupInvalid"/>.
         /// </summary>
         public const string MergeVertexGroupInvalid = ApaErrorCode.MergeVertexGroupInvalid;
 
@@ -100,7 +117,8 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             return ApaReservedCodes.IsMilestone5AuthoringCode(code)
                    || ApaReservedCodes.IsMilestone9AuthoringCode(code)
-                   || ApaReservedCodes.IsMilestone13Code(code);
+                   || ApaReservedCodes.IsMilestone13Code(code)
+                   || ApaReservedCodes.IsMilestone14Code(code);
         }
     }
 

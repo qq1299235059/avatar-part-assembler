@@ -71,14 +71,10 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Load Profile…", "加载配置文件…" },
                 { "Use Unity Selection", "使用 Unity 当前选择" },
                 { "Highlights", "高亮显示" },
-                { "Stop Picking", "停止拾取" },
                 { "Started a new draft.", "已开始新草稿。" },
                 { "Adopted the Unity selection.", "已采用 Unity 当前选择。" },
                 { "Nothing to adopt: select a part with an AvatarPartInstaller, or a target body renderer.",
                   "没有可采用的选中项：请选择一个带 AvatarPartInstaller 的部件，或一个目标身体渲染器。" },
-                { "Picking was stopped because the window was reopened. Arm a picking mode again when you want to " +
-                  "edit removal triangles or seam vertices in the Scene View.",
-                  "窗口重新打开后拾取已停止。需要在场景视图中编辑移除三角形或接缝顶点时，请重新启用拾取模式。" },
 
                 // ---- Selection section -----------------------------------------------------------------
                 { "Selection", "选择" },
@@ -203,6 +199,10 @@ namespace AvatarPartAssembler.Editor.Localization
                   "允许替换已存在的资产（未勾选时会再次询问）" },
                 { "Existing profile", "已存在的配置文件" },
                 { "Load Existing Profile", "加载已有配置文件" },
+                { "Read a saved profile asset into the draft. The asset itself is never written until you save " +
+                  "it, and loading replaces the whole draft, so the fields below show the loaded profile.",
+                  "把已保存的配置文件资产读入草稿。在你保存之前，该资产本身不会被写入；加载会替换整个草稿，" +
+                  "因此下方的各个字段显示的是加载进来的配置文件。" },
                 { "Profile path problem: {0}", "配置文件路径问题：{0}" },
                 { "exists — the draft differs from it", "已存在 — 草稿与其不一致" },
                 { "exists — the draft matches it", "已存在 — 草稿与其一致" },
@@ -210,21 +210,11 @@ namespace AvatarPartAssembler.Editor.Localization
                 // ---- Removal section -------------------------------------------------------------------
                 { "Removal Region", "移除区域" },
                 { "Selected", "已选" },
-                { "Pick Triangles In Scene", "在场景中拾取三角形" },
                 { "Clear", "清空" },
-                { "Submesh", "子网格" },
-                { "Remove All In Submesh", "移除该子网格内全部" },
-                { "Add Address", "添加地址" },
-                { "Add List", "添加列表" },
-                { "Addresses", "地址" },
-                { "Format: submesh:triangle, for example 0:12, 0:13, 1:4-9",
-                  "格式：子网格:三角形，例如 0:12, 0:13, 1:4-9" },
                 { "Removal set problems", "移除集合问题" },
-                { "Removed {0} address(es) from submesh {1}.", "已从子网格 {1} 移除 {0} 个地址。" },
-                { "Removal address list not parsed: {0}", "移除地址列表无法解析：{0}" },
-                { "Added {0} removal address(es).", "已添加 {0} 个移除地址。" },
-                { "Added {0} removal address(es); {1} duplicate(s) were already present and were kept unchanged.",
-                  "已添加 {0} 个移除地址；其中 {1} 个重复项已存在并保持不变。" },
+                { "Highlights are off in the toolbar, so the Scene View overlays are hidden. Turning them on " +
+                  "draws the removal overlay.",
+                  "工具栏中的“高亮显示”已关闭，因此场景视图叠加层被隐藏。开启后会绘制移除叠加层。" },
 
                 // ---- Texture mask (black/white mask selection) -----------------------------------------
                 { "Texture Mask", "纹理遮罩（黑白遮罩）" },
@@ -316,11 +306,12 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Clear Seam", "清空接缝" },
                 { "Cleared the seam. This part now declares no seam.", "已清空接缝。该部件现在不声明任何接缝。" },
                 { "Both meshes are read in their rest pose (the shared mesh, never a baked pose) and every " +
-                  "world-coincident pair within the tolerance is written as one weld — but only vertices of " +
-                  "the named 'merge vertex' group may pair. Leave the seam empty when this part does not " +
-                  "weld to the body.",
-                  "两个网格都按静置姿势读取（使用共享网格，绝不使用烘焙姿势），容差内所有世界坐标重合的顶点都会写成一对焊接——" +
-                  "但只有名为 'merge vertex' 的顶点组内的顶点才允许配对。如果该部件不与身体焊接，请保持接缝为空。" },
+                  "world-coincident pair within the tolerance is written as one weld. Only part vertices that " +
+                  "carry the selected candidate color may pair; the target body is matched spatially and needs " +
+                  "no vertex colors. Leave the seam empty when this part does not weld to the body.",
+                  "两个网格都按静置姿势读取（使用共享网格，绝不使用烘焙姿势），容差内所有世界坐标重合的顶点都会写成一对焊接。" +
+                  "只有带有选中候选颜色的部件顶点才允许配对；目标身体按空间位置匹配，不需要顶点色。" +
+                  "如果该部件不与身体焊接，请保持接缝为空。" },
                 { "This seam was authored before explicit pairing: its two lists are unordered sets and the " +
                   "build refuses them (APA042). Generate it from world positions to write the pairing.",
                   "该接缝是在显式配对之前制作的：它的两个列表是无序集合，构建会拒绝它（APA042）。" +
@@ -334,14 +325,66 @@ namespace AvatarPartAssembler.Editor.Localization
                   "counterpart.",
                   "在世界容差 {1} 内生成 {0} 对接缝；{3} 个部件顶点中有 {2} 个找到了未占用的对应顶点。" },
                 { "Seam problems", "接缝问题" },
-                { "Target merge vertex group: {0}", "目标 'merge vertex' 顶点组：{0}" },
-                { "Part merge vertex group: {0}", "部件 'merge vertex' 顶点组：{0}" },
                 { "not resolved", "未解析" },
-                { "no merge vertex group", "没有 'merge vertex' 顶点组" },
-                { "{0} merge-vertex candidate(s) from the ApaMergeVertexGroup component",
-                  "来自 ApaMergeVertexGroup 组件的 {0} 个接缝候选顶点" },
-                { "{0} merge-vertex candidate(s) from the '{1}' bone",
-                  "来自 '{1}' 骨骼的 {0} 个接缝候选顶点" },
+                { "no seam candidate color", "没有接缝候选颜色" },
+                { "{0} seam candidate vertex(es) carrying the color {1}",
+                  "{1} 颜色的 {0} 个接缝候选顶点" },
+                { "Candidate Color Code", "候选颜色代码" },
+                { "The vertex color that marks a seam candidate on the part mesh, written as #RRGGBB. " +
+                  "#RRGGBBAA is accepted as well, and is shown when the alpha is not opaque. A part vertex may " +
+                  "pair only when all four channels of its stored Mesh.colors32 entry equal this color exactly " +
+                  "— there is no tolerance, and the alpha channel participates. The target body mesh is not " +
+                  "filtered by color: its vertices are matched by world position. Paint the part's seam ring " +
+                  "with this color in the modelling tool, or write Mesh.colors32 before generating the seam.",
+                  "标记部件网格上接缝候选顶点的顶点颜色，写作 #RRGGBB。也接受 #RRGGBBAA；当 alpha 不是不透明时会以该形式显示。" +
+                  "只有当部件顶点保存的 Mesh.colors32 四个通道与该颜色完全相等时，它才是候选顶点——没有容差，且 alpha 通道同样参与比较。" +
+                  "目标身体网格不按颜色过滤：它的顶点按世界坐标匹配。" +
+                  "请在建模工具中用该颜色绘制部件的接缝环，或在生成接缝前写入 Mesh.colors32。" },
+                { "Color code '{0}' is not a color. Write #RRGGBB, or #RRGGBBAA to include the alpha channel; " +
+                  "the previous color {1} is still in effect.",
+                  "颜色代码 '{0}' 不是有效的颜色。请写作 #RRGGBB，或使用 #RRGGBBAA 以包含 alpha 通道；" +
+                  "之前的颜色 {1} 仍然有效。" },
+                { "Matched color: {0} (exact Color32 equality, alpha included)",
+                  "匹配颜色：{0}（Color32 完全相等，含 alpha）" },
+                { "Target seam candidates: {0}", "目标接缝候选：{0}" },
+                { "Part seam candidates: {0}", "部件接缝候选：{0}" },
+                { "{0} spatial target vertex(es) (paired by world position, not by color)",
+                  "按世界坐标（而非颜色）配对的 {0} 个目标顶点" },
+                { "Merge Check Overlay", "合并检查叠加层" },
+                { "Draw the prospective pairing of the selected candidate colors in the Scene View instead of " +
+                  "the ordinary overlays: candidates the matcher would pair are green, candidates with no " +
+                  "counterpart within the tolerance are red. The removal, candidate, and stored-seam overlays " +
+                  "are hidden while this is on and reappear unchanged when it is switched off. Nothing is " +
+                  "written: the stored seam and the profile are untouched.",
+                  "在场景视图中用“预演配对”取代常规叠加层：匹配器会配对的顶点为绿色，容差内没有对应顶点的部件候选顶点为红色。" +
+                  "开启时移除、候选与已存接缝叠加层会被隐藏，关闭后原样恢复。该模式不写入任何数据：已存接缝与配置文件保持不变。" },
+                { "merge check unavailable", "无法执行合并检查" },
+                { "{0} matched pair(s); {1} of {2} target and {3} of {4} part candidate(s) unmatched at a world " +
+                  "tolerance of {5}",
+                  "已配对 {0} 对；世界容差 {5} 下，{2} 个目标候选中有 {1} 个、{4} 个部件候选中有 {3} 个没有对应顶点" },
+                { "{0} matched pair(s); the target side is spatial ({1} target vertex(es)); {2} of {3} part " +
+                  "candidate(s) unmatched at a world tolerance of {4}",
+                  "已配对 {0} 对；目标侧为空间匹配（{1} 个目标顶点）；世界容差 {4} 下，{3} 个部件候选中有 {2} 个没有对应顶点" },
+                { "select a target renderer and a part renderer with meshes to run the merge check",
+                  "请选择带网格的目标渲染器与部件渲染器，才能执行合并检查" },
+                { "Avatar Part Assembler — Merge Check\nmerge check: {0}\ntolerance (world units): {1}\n" +
+                  "green: would pair   red: part candidate with no counterpart",
+                  "Avatar Part Assembler — 合并检查\n合并检查：{0}\n容差（世界单位）：{1}\n" +
+                  "绿色：会配对   红色：没有对应顶点的部件候选" },
+                { "Removal Overlay", "移除叠加层" },
+                { "Candidate Overlay", "候选叠加层" },
+                { "Show the red triangles selected by the removal mask in the Scene View.",
+                  "在场景视图中显示移除遮罩选中的红色三角形。" },
+                { "Show the green seam-candidate vertices and the stored seam points in the Scene View.",
+                  "在场景视图中显示绿色接缝候选顶点与已保存的接缝点。" },
+                { "Show matched seam candidates in green and unmatched part candidates in red.",
+                  "将已匹配的接缝候选显示为绿色，将未匹配的部件候选显示为红色。" },
+                { "Draw the triangles the removal mask generated in the Scene View. Off by default. It is a " +
+                  "read-only visualization of the authored removal set: it follows the target's current " +
+                  "blend-shape pose, while the removal set itself stays a set of triangle addresses, and " +
+                  "clicking in the Scene View never edits it.",
+                  "在场景视图中绘制移除遮罩生成的三角形。默认关闭。它只是对已制作移除集合的只读可视化：" +
+                  "会跟随目标当前的形态键姿势，而移除集合本身始终是一组三角形地址，在场景视图中点击不会修改它。" },
                 { "preview: current blend-shape pose; seam data stays rest-pose",
                   "预览：当前形态键姿势；接缝数据仍为静置姿势" },
                 { "\npreview: current blend-shape pose; seam data stays rest-pose",
@@ -350,9 +393,8 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Mesh Fingerprint", "网格指纹" },
                 { "mesh fingerprint", "网格指纹" },
                 { "Capture Part Mesh Fingerprint", "捕获部件网格指纹" },
-                { "… and {0} more (the numeric address field and the mask modes edit the whole set)",
-                  "… 另有 {0} 项（数字地址输入框与遮罩模式可编辑整个集合）" },
-                { "Remove", "移除" },
+                { "… and {0} more (re-apply the mask to change the whole set)",
+                  "… 另有 {0} 项（重新应用遮罩可修改整个集合）" },
 
                 // ---- Removal address list (collapsed summary, M10) -------------------------------------
                 { "Addresses ({0})", "地址（{0}）" },
@@ -427,13 +469,10 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "{0} error(s), {1} warning(s), {2} info", "{0} 个错误、{1} 个警告、{2} 条信息" },
 
                 // ---- Scene View tool -------------------------------------------------------------------
-                { "Picking stopped.", "拾取已停止。" },
-                { "Picking in the Scene View. Left click toggles, shift or control click removes.",
-                  "正在场景视图中拾取。左键点击切换，Shift 或 Ctrl 点击移除。" },
-                { "Off", "关闭" },
-                { "Pick Removal Triangles", "拾取移除三角形" },
-                { "Avatar Part Assembler — {0}\nremoval: {1}\nseam: {2}\nleft click: toggle   shift/ctrl click: remove",
-                  "部件装配器 — {0}\n移除区域：{1}\n接缝：{2}\n左键点击：切换   Shift/Ctrl 点击：移除" },
+                { "Avatar Part Assembler\nremoval: {0}\nseam: {1}",
+                  "部件装配器\n移除区域：{0}\n接缝：{1}" },
+                { "\noverlays are off: turn on Highlights in the Part Authoring toolbar",
+                  "\n叠加层已关闭：请在“部件编辑”工具栏中开启“高亮显示”" },
                 { "\nshowing the first {0} removed triangles", "\n仅显示前 {0} 个移除三角形" },
 
                 // ---- Status lines composed by the window -----------------------------------------------
@@ -494,8 +533,6 @@ namespace AvatarPartAssembler.Editor.Localization
 
                 // ---- Undo labels -----------------------------------------------------------------------
                 { "Edit Avatar Part", "编辑部件" },
-                { "Toggle Removal Triangle", "切换移除三角形" },
-                { "Remove Removal Triangle", "移除移除三角形" },
                 { "New Part Draft", "新建部件草稿" },
                 { "Adopt Unity Selection", "采用 Unity 选择" },
                 { "Find Avatar Root", "查找角色根对象" },
@@ -504,8 +541,6 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Change Output Paths", "更改输出路径" },
                 { "Reset Output Paths", "重置输出路径" },
                 { "Clear Removal Mask", "清空移除遮罩" },
-                { "Remove Submesh Triangles", "移除子网格三角形" },
-                { "Add Removal Triangles", "添加移除三角形" },
                 { "Infer UV Semantics", "推断 UV 语义" },
                 { "Add UV Semantic", "添加 UV 语义" },
                 { "Edit UV Semantic", "编辑 UV 语义" },
@@ -848,8 +883,10 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "APA045", "同名 UV 语义在接缝配对上不一致，已保留部件接缝顶点（拆分顶点）" },
                 { "APA046", "配置文件没有保存部件 ID，已从配置文件资产 GUID 派生稳定 ID" },
                 { "APA050", "UV 语义声明的通道在部件网格上不存在" },
-                { "APA051", "无法把渲染器上名为 'merge vertex' 的顶点组解析为候选顶点：没有声明该组、组内为空、" +
-                            "权重全为零、同名骨骼不唯一，或列出的索引无法用于该网格" },
+                { "APA051", "（已退役）无法把渲染器上名为 'merge vertex' 的顶点组解析为候选顶点：没有声明该组、组内为空、" +
+                            "权重全为零、同名骨骼不唯一，或列出的索引无法用于该网格。该表示已被顶点颜色候选契约取代，本构建不再产生此码" },
+                { "APA052", "无法把渲染器的顶点颜色解析为接缝候选顶点：网格没有顶点颜色、颜色数量与顶点数不一致，" +
+                            "或没有任何顶点带有选中的候选颜色" },
                 { "APA999", "装配器内部发生了未预期的异常" }
             };
     }

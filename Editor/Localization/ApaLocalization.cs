@@ -363,20 +363,6 @@ namespace AvatarPartAssembler.Editor.Localization
             }
         }
 
-        /// <summary>The localized display name of a Scene View picking mode.</summary>
-        /// <remarks>
-        /// Only the removal-triangle mode is pickable since M10: the seam-vertex modes are gone, because a seam is
-        /// generated from world positions rather than clicked vertex by vertex.
-        /// </remarks>
-        public static string DisplayName(ApaSceneToolMode mode)
-        {
-            switch (mode)
-            {
-                case ApaSceneToolMode.RemovalTriangles: return Tr("Pick Removal Triangles");
-                default: return Tr("Off");
-            }
-        }
-
         /// <summary>
         /// The localized display name of a texture-mask apply mode.
         /// </summary>

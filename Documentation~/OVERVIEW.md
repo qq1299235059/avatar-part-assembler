@@ -22,7 +22,7 @@ authoring asset.
 
 ## Release-candidate status
 
-**This is release candidate `0.3.0-rc.9` (`0.3.0-rc.9` in `package.json`). It is not a
+**This is release candidate `0.3.0-rc.12` (`0.3.0-rc.12` in `package.json`). It is not a
 1.0 release and the full acceptance checklist is still incomplete.**
 
 The core build path has now been exercised in Unity 2022.3.22f1 rather than only reviewed
@@ -114,7 +114,7 @@ whether the Test Runner can see and run it.
 
 ## Play Mode and Gesture Manager
 
-`0.3.0-rc.9` enables Play Mode compatibility by default. When a loaded scene contains an
+`0.3.0-rc.12` enables Play Mode compatibility by default. When a loaded scene contains an
 `AvatarPartInstaller`, APA temporarily enables NDMF's official **Apply On Play** setting before
 entering Play Mode.
 
@@ -283,15 +283,12 @@ Open `Tools > Avatar Part Assembler > Part Authoring`. The window guides the flo
    Assembly`, `Save Profile Asset`, `Create Part Prefab`, and `Update Installer On Prefab`
    — but only while the profile has **never** captured one and the live target is usable.
    An already captured signature is never overwritten.
-6. **Removal** — declare the base triangles the part replaces. Three tools, one set:
-   `Pick Triangles In Scene` arms a Scene View tool for individual triangles, the
-   **Texture Mask** block converts a black/white texture into a whole region at once
+6. **Removal** — declare the base triangles the part replaces. The **Texture Mask** block is
+   the only authoring surface: it converts a black/white texture into a whole region at once
    (white selects, black keeps; 7 samples per triangle, majority of 4; the texture is an
-   authoring input and is never saved), and `Remove All In Submesh`, `Add Address`, and
-   `Add List` are the keyboard/numeric alternatives. The removal address list collapses to
-   `Addresses (N)` and draws at most 28 rows when expanded, so a few thousand addresses
-   cannot bury the window; the numeric address field and the mask's apply modes still edit
-   the whole set precisely.
+   authoring input and is never saved). The generated address set is shown as a bounded,
+   read-only review; Scene View picking, numeric addresses, and submesh bulk deletion are
+   deliberately not available, so the mask remains the single source of removal selection.
 7. **UV semantics** — declare which `(semantic name → source channel)` pairs the part
    carries. `Infer From Part Mesh` fills the rows; `APA050` refuses a declared channel
    the mesh does not actually have.
@@ -539,13 +536,20 @@ two Scene View picking modes are gone: they asked the author to maintain one
 correspondence across two spaces, which is exactly the correspondence the tool computes in
 one action.
 
-Automatic generation is restricted to the exact named `merge vertex` group on both renderers. Unity's `Mesh` API
-does not preserve arbitrary vertex-group names: an imported skinned group can be represented by a bone named exactly
-`merge vertex` with positive per-vertex weights, while non-skinned/import-tool data uses the `ApaMergeVertexGroup`
-component on the renderer object. Missing, empty, ambiguous, stale, duplicate or out-of-range group data blocks with
-`APA051 MERGE_VERTEX_GROUP_INVALID`; there is no all-vertex fallback. The authoring red removal overlay and its
-hover/click picking use a cached `SkinnedMeshRenderer.BakeMesh` result while blend-shape weights are active, but the
-triangle addresses, seam pairs and build remain rest-pose data.
+Automatic generation restricts only the **part** side by vertex color: the selected color (opaque black `#000000` by
+default) must exactly match all four channels of a part vertex's stored `Mesh.colors32` entry. Missing colors, a
+color-array length that does not equal the part vertex count, or a selected color carried by no part vertex blocks
+with `APA052 SEAM_CANDIDATE_COLOR_INVALID`; there is no all-part-vertex fallback. The target body is not required
+to carry vertex colors: every readable target vertex remains the spatial search space for the world-position
+matcher. The old named `merge vertex` group representation (`ApaMergeVertexGroup` or a same-named bone) has been
+removed; `APA051` remains retired with its original meaning and is never reused. The green candidate overlay shows
+part candidates, while Merge Check temporarily hides the ordinary overlays and shows prospective matched target and
+ part vertices in green and unmatched part candidates in red without writing the profile. The candidate value is
+entered as a strict `#RRGGBB` code (optionally `#RRGGBBAA`), so malformed text keeps the previous valid value
+without touching mesh caches. The red removal overlay is off by default and is controlled by its own toggle; when
+enabled, it is a read-only visualization of the mask result using a cached `SkinnedMeshRenderer.BakeMesh` result
+while blend-shape weights are active. Reopening the authoring window or loading a profile restores both armature
+object fields from their recorded relative paths and clears derived state.
 
 Equality is never used for floats: the generator compares squared world distances against
 the tolerance, and the position and UV epsilons used elsewhere keep their `1e-5` defaults,
@@ -718,9 +722,8 @@ non-finite or out-of-range threshold, unsupported topology, or a readback the de
 stops with **blocking `APA041 REMOVAL_MASK_TEXTURE_FAILED`**, and the whole diagnostic (code,
 mnemonic title, message, and the stable `reason=` token) is rendered in the Texture Mask block
 where Apply was pressed, and again in the write section's "Last write reported" list. The
-existing selection is left untouched. The Scene View picker and the numeric address list
-remain available throughout: the mask is for the bulk of a region, the picker for the two
-triangles it got wrong, and the list for an exact, reproducible entry.
+ existing selection is left untouched. No manual Scene View picker or numeric address entry remains; a new
+selection is produced by applying the mask again with Replace, Add, or Subtract mode.
 
 Applying a mask is **one undo record** — one Apply, one Undo, whichever mode ran.
 
@@ -728,13 +731,9 @@ Applying a mask is **one undo record** — one Apply, one Undo, whichever mode r
 
 A real removal region can hold a few thousand triangle addresses, and drawing all of them
 turns the window into a spreadsheet. The list therefore collapses to `Addresses (N)`:
-expanded, it draws at most **28 rows**, each still removable individually, with a summary
-line for the rest (the summary also states that the numeric address field and the mask
-modes edit the whole set). The global `MaxListedRows` (200) shared with the other lists is
-deliberately **unchanged** — it is the display bound of the other lists, and lowering it
-would only lose information elsewhere. The list is for review and single corrections; bulk
-corrections are the numeric address field and the texture mask's Replace / Add To Selection
-/ Subtract From Selection modes.
+expanded, it draws at most **28 rows**, with a summary line for the rest. The list is strictly
+read-only; changes are made only by applying the texture mask with Replace, Add To Selection,
+or Subtract From Selection mode.
 
 ### UV
 
@@ -1068,7 +1067,7 @@ Two version numbers, never conflated:
 | Version | Meaning | Current value |
 | --- | --- | --- |
 | `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **5** (`ApaPartProfile.CurrentSchemaVersion`) |
-| Package version in `package.json` | The shipped build | **0.3.0-rc.9** |
+| Package version in `package.json` | The shipped build | **0.3.0-rc.12** |
 
 Migration policy:
 
@@ -1378,7 +1377,7 @@ observation of them (checklist 6.7) is still open.
 
 ### Release-candidate versioning
 
-`0.3.0-rc.9` is a **prerelease**. Per semver it sorts before `0.3.0`, so no VPM
+`0.3.0-rc.12` is a **prerelease**. Per semver it sorts before `0.3.0`, so no VPM
 resolution will treat it as the stable `0.3.0`. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
 no document, changelog entry, or commit message in this package may describe the

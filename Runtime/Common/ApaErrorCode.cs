@@ -27,8 +27,12 @@ namespace AvatarPartAssembler
     /// (<c>SEAM_UV_PRESERVED</c>) and APA046 (<c>PART_ID_DERIVED</c>), see
     /// <see cref="ApaReservedCodes.Milestone11"/>.
     /// M12 allocates APA047 through APA049 for mesh-content fingerprints and seam skinning safety.
-    /// M13 allocates APA051 (<c>MERGE_VERTEX_GROUP_INVALID</c>) for the named <c>merge vertex</c> group the
-    /// automatic seam generator reads; see <see cref="ApaReservedCodes.Milestone13"/>.
+    /// M13 allocated APA051 (<c>MERGE_VERTEX_GROUP_INVALID</c>) for the named <c>merge vertex</c> group the
+    /// automatic seam generator read; see <see cref="ApaReservedCodes.Milestone13"/>. That representation was
+    /// retired by M14 — automatic seam generation now reads mesh vertex colors — so APA051 is kept as a retired
+    /// allocation and is no longer emitted by this build, while APA052
+    /// (<c>SEAM_CANDIDATE_COLOR_INVALID</c>) is the M14 code the vertex-color candidate contract emits; see
+    /// <see cref="ApaReservedCodes.Milestone14"/>.
     /// </para>
     /// </remarks>
     public static class ApaErrorCode
@@ -567,26 +571,64 @@ namespace AvatarPartAssembler
         /// </summary>
         /// <remarks>
         /// <para>
-        /// Emitted by the authoring layer only, by the automatic world-position seam generator, because the group
-        /// is an authoring <i>input</i>: the build consumes the explicit seam pairs the generator writes, never
-        /// the group. The condition is the whole contract of "which vertices may pair": the renderer declares no
-        /// group at all, declares it in a representation that carries no data (an empty component list, or a bone
-        /// that weights no vertex positively), declares it ambiguously (two bones share the name), or declares
-        /// indices the mesh cannot address (out of range, repeated, or recorded against a mesh of a different
-        /// size). Every one of them has the same remedy — fix the group on the source or in the component — and
-        /// the same alternative the contract forbids, which is silently pairing every vertex instead.
+        /// <b>Retired by M14; never emitted by this build.</b> The named <c>merge vertex</c> representation — an
+        /// <c>ApaMergeVertexGroup</c> component, or a skinned bone of that name with positive weights — was
+        /// replaced by the vertex-color candidate contract, because Unity import pipelines routinely drop
+        /// non-bone vertex groups while preserving mesh vertex colors. The constant is kept, with its registered
+        /// meaning and title unchanged, so the code is never reused for a different condition; the condition that
+        /// replaced it is <see cref="SeamCandidateColorInvalid"/> (<c>APA052</c>), which has its own meaning: a
+        /// mesh's vertex colors cannot be resolved into candidates. A reader who finds <c>APA051</c> in an old log
+        /// or an old profile therefore still reads the right thing, and nothing in the current workflow can
+        /// produce it.
         /// </para>
         /// <para>
-        /// The failing condition is carried by a stable <c>reason=…</c> token in the detail
+        /// The condition it named was the whole contract of "which vertices may pair": the renderer declared no
+        /// group at all, declared it in a representation that carried no data (an empty component list, or a bone
+        /// that weighted no vertex positively), declared it ambiguously (two bones shared the name), or declared
+        /// indices the mesh could not address (out of range, repeated, or recorded against a mesh of a different
+        /// size). Every one of them had the same remedy — fix the group on the source or in the component — and
+        /// the same alternative the contract forbade, which is silently pairing every vertex instead.
+        /// </para>
+        /// <para>
+        /// The failing condition was carried by a stable <c>reason=…</c> token in the detail
         /// (<c>merge-vertex-group-missing</c>, <c>merge-vertex-group-not-skinned</c>,
         /// <c>merge-vertex-group-empty</c>, <c>merge-vertex-group-no-weighted-vertices</c>,
         /// <c>merge-vertex-group-ambiguous-bone</c>, <c>merge-vertex-group-index-out-of-range</c>,
         /// <c>merge-vertex-group-duplicate-index</c>, <c>merge-vertex-group-vertex-count-mismatch</c>, and
-        /// <c>merge-vertex-group-weight-count-mismatch</c>), so a report, a test, and a log stay comparable
-        /// without a code per condition. Allocated by M13 above the M12 range.
+        /// <c>merge-vertex-group-weight-count-mismatch</c>). Allocated by M13 above the M12 range.
         /// </para>
         /// </remarks>
         public const string MergeVertexGroupInvalid = "APA051";
+
+        /// <summary>
+        /// The vertex-color seam candidate contract of a renderer cannot be resolved into candidate vertices.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Emitted by the authoring layer only, by the automatic world-position seam generator and by the Scene
+        /// View candidate overlay, because the candidate color is an authoring <i>input</i>: the build consumes
+        /// the explicit seam pairs the generator writes, never the mesh's vertex colors. The condition is the
+        /// whole contract of "which vertices may pair" since M14: the mesh carries no vertex color at all, its
+        /// color array does not have exactly one entry per vertex, or no vertex carries the selected candidate
+        /// color. Every one of them has the same remedy — paint the seam vertices with the candidate color (or
+        /// select the color the mesh stores) — and the same alternative the contract forbids, which is silently
+        /// pairing every vertex instead.
+        /// </para>
+        /// <para>
+        /// Distinct from the retired <see cref="MergeVertexGroupInvalid"/> (<c>APA051</c>) on purpose: that code
+        /// names a <i>named group</i> — a component list or a bone — while this one names a mesh's stored
+        /// <i>colors</i>. The two conditions have different inputs and different remedies, so one code must not
+        /// carry both meanings; the M14 replacement of the representation therefore allocated a new code rather
+        /// than reusing the retired one.
+        /// </para>
+        /// <para>
+        /// The failing condition is carried by a stable <c>reason=…</c> token in the detail
+        /// (<c>vertex-color-missing</c>, <c>vertex-color-count-mismatch</c>, <c>no-vertex-color-candidates</c>,
+        /// <c>empty-mesh</c>, and <c>vertex-color-candidates-unresolved</c>), so a report, a test, and a log stay
+        /// comparable without a code per condition. Allocated by M14 above the M13 range.
+        /// </para>
+        /// </remarks>
+        public const string SeamCandidateColorInvalid = "APA052";
 
         /// <summary>An unexpected exception escaped the assembler. Always accompanied by the exception detail.</summary>
         public const string InternalError = "APA999";
@@ -649,6 +691,7 @@ namespace AvatarPartAssembler
                 case ProfileMeshFingerprintMismatch: return "PROFILE_MESH_FINGERPRINT_MISMATCH";
                 case SeamWeightBoneNotInTarget: return "SEAM_WEIGHT_BONE_NOT_IN_TARGET";
                 case MergeVertexGroupInvalid: return "MERGE_VERTEX_GROUP_INVALID";
+                case SeamCandidateColorInvalid: return "SEAM_CANDIDATE_COLOR_INVALID";
                 case InternalError: return "INTERNAL_ERROR";
                 default: return string.Empty;
             }
@@ -676,10 +719,14 @@ namespace AvatarPartAssembler
 
         /// <summary>
         /// Codes allocated but deliberately not produced by this build. Empty at the release candidate: every
-        /// code allocated so far is emitted by the code that owns it (M2's bone/bind-pose codes, M5's authoring
-        /// codes, M6's multi-part policy codes, M9's texture-mask authoring code, M10's armature-selection,
-        /// out-of-scope-bone, and seam-pairing codes, and M11's seam-preservation and derived-part-id codes), so
-        /// there is nothing reserved for a later milestone. A later
+        /// code allocated so far is either emitted by the code that owns it (M2's bone/bind-pose codes, M5's
+        /// authoring codes, M6's multi-part policy codes, M9's texture-mask authoring code, M10's
+        /// armature-selection, out-of-scope-bone, and seam-pairing codes, M11's seam-preservation and
+        /// derived-part-id codes, M12's fingerprint and seam-skinning codes, and M14's vertex-color candidate
+        /// code) or <b>retired</b> — <c>APA051</c> names the named <c>merge vertex</c> group M14 replaced, so it
+        /// stays allocated with its meaning and title unchanged and is simply no longer emitted. A retired code is
+        /// not "reserved for a later milestone": this array stays empty, because a later milestone must never
+        /// produce a retired code's condition under a new meaning. A later
         /// milestone adds its allocation array beside <see cref="Milestone6"/> rather than repopulating this one,
         /// which keeps each code's introducing milestone readable.
         /// </summary>
@@ -799,18 +846,40 @@ namespace AvatarPartAssembler
         };
 
         /// <summary>
-        /// Codes allocated by M13: the named <c>merge vertex</c> group the automatic seam generator reads.
+        /// Codes allocated by M13: the named <c>merge vertex</c> group the automatic seam generator read.
         /// </summary>
         /// <remarks>
         /// Kept as its own allocation record for the same reason as the earlier arrays: a later milestone reads
         /// which milestone introduced a code, and a milestone that adds codes never renumbers an existing one.
-        /// <c>APA051</c> is an authoring-layer code — the build never sees a vertex group — so it is emitted only
-        /// by <c>ApaMergeVertexGroupResolver</c>, and the failing condition is carried by a <c>reason=…</c> token
-        /// rather than by a code per condition.
+        /// <c>APA051</c> was an authoring-layer code — the build never saw a vertex group — emitted only by the
+        /// retired <c>ApaMergeVertexGroupResolver</c>, with the failing condition carried by a <c>reason=…</c>
+        /// token rather than by a code per condition.
+        /// <para>
+        /// <b>Retired by M14.</b> The named-group representation was replaced by the vertex-color candidate
+        /// contract, so nothing in this build emits <c>APA051</c>. The code stays allocated, and its registered
+        /// meaning and title are unchanged, because a retired code must never be reused for a different
+        /// condition; the M14 contract has its own code in <see cref="Milestone14"/>.
+        /// </para>
         /// </remarks>
         public static readonly string[] Milestone13 =
         {
             ApaErrorCode.MergeVertexGroupInvalid
+        };
+
+        /// <summary>
+        /// Codes allocated by M14: the vertex-color seam candidate contract that replaced the named
+        /// <c>merge vertex</c> group.
+        /// </summary>
+        /// <remarks>
+        /// Kept as its own allocation record for the same reason as the earlier arrays: a later milestone reads
+        /// which milestone introduced a code, and a milestone that adds codes never renumbers an existing one.
+        /// <c>APA052</c> is an authoring-layer code — the build never sees a vertex color as a candidate set — so
+        /// it is emitted only by <c>ApaSeamVertexColorCandidates</c> and <c>ApaSeamMergeCheck</c>, and the failing
+        /// condition is carried by a <c>reason=…</c> token rather than by a code per condition.
+        /// </remarks>
+        public static readonly string[] Milestone14 =
+        {
+            ApaErrorCode.SeamCandidateColorInvalid
         };
 
         /// <summary>Returns true when the code was allocated for the M12 safety work.</summary>
@@ -832,6 +901,18 @@ namespace AvatarPartAssembler
             for (var i = 0; i < Milestone13.Length; i++)
             {
                 if (string.Equals(Milestone13[i], code, StringComparison.Ordinal)) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Returns true when the code was allocated for the M14 vertex-color candidate work.</summary>
+        public static bool IsMilestone14Code(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return false;
+            for (var i = 0; i < Milestone14.Length; i++)
+            {
+                if (string.Equals(Milestone14[i], code, StringComparison.Ordinal)) return true;
             }
 
             return false;

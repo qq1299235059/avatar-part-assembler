@@ -6,18 +6,18 @@ using static AvatarPartAssembler.Editor.Localization.ApaLocalization;
 namespace AvatarPartAssembler.Editor.Authoring
 {
     /// <summary>
-    /// The editable body-removal triangle set of one part.
+    /// The body-removal triangle set of one part, as the texture mask generated it.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This is the authoring-side editor state for <see cref="ApaRemovalProfile"/>. It is a separate type, and
+    /// This is the authoring-side representation of <see cref="ApaRemovalProfile"/>. It is a separate type, and
     /// not the profile itself, for three reasons:
     /// </para>
     /// <list type="bullet">
     /// <item><description>
-    /// The profile is a serialized asset whose setter replaces the whole set. Interactive editing needs
-    /// incremental add, remove, and toggle, and it needs to report a duplicate instead of silently collapsing
-    /// it.
+    /// The profile is a serialized asset whose setter replaces the whole set. Authoring needs whole-set
+    /// operations that report what they did — how many addresses a mask added, which ones were already present —
+    /// instead of silently collapsing the input.
     /// </description></item>
     /// <item><description>
     /// The mask has to survive Unity's undo and domain-reload serialization as a plain <c>[Serializable]</c>
@@ -25,12 +25,20 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// hash set, which Unity cannot serialize.
     /// </description></item>
     /// <item><description>
-    /// It carries the non-authoritative structural check that gives the picker live feedback before a
+    /// It carries the non-authoritative structural check that gives the mask block live feedback before a
     /// validation context can exist. The authoritative check remains <see cref="RemovalRule"/>, reached
     /// through <c>ApaCore.Validate</c>; this class deliberately reports the same codes and detail tokens as that
     /// rule so that the two cannot tell the author two different stories.
     /// </description></item>
     /// </list>
+    /// <para>
+    /// <b>Whole-set only (M16).</b> The removal region is authored by the texture mask, so the operations here
+    /// are the ones a mask application needs: replace, add a generated set, subtract a generated set, clear, and
+    /// remove one address that a subtract is walking. The per-triangle toggle, the submesh bulk delete, and the
+    /// address-list parser existed for the Scene View pick mode and the numeric address field; both were removed
+    /// with mask-only authoring, and they are gone here too rather than left as an unused second way to describe
+    /// the same set.
+    /// </para>
     /// <para>
     /// <b>Invariant.</b> The two arrays always have the same length, are sorted ascending by
     /// (<c>submesh</c>, <c>triangle</c>), and contain no duplicates. <see cref="HasCorruptStorage"/> exists
@@ -166,32 +174,6 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             RemoveAt(index);
             return true;
-        }
-
-        /// <summary>Adds the address when absent, removes it when present.</summary>
-        /// <returns>True when the address is present after the call.</returns>
-        public bool Toggle(RemovedTriangleAddress address)
-        {
-            if (Remove(address)) return false;
-            Add(address);
-            return true;
-        }
-
-        /// <summary>Removes every address belonging to one submesh.</summary>
-        /// <returns>The number of addresses removed.</returns>
-        public int RemoveSubMesh(int subMeshIndex)
-        {
-            if (HasCorruptStorage) return 0;
-
-            var removed = 0;
-            for (var i = Count - 1; i >= 0; i--)
-            {
-                if (_subMeshIndices[i] != subMeshIndex) continue;
-                RemoveAt(i);
-                removed++;
-            }
-
-            return removed;
         }
 
         /// <summary>Removes everything.</summary>
@@ -360,105 +342,6 @@ namespace AvatarPartAssembler.Editor.Authoring
         }
 
         /// <summary>
-        /// Parses the numeric fallback the picker cannot replace: a list of triangle addresses written as
-        /// <c>submesh:triangle</c>, with an optional inclusive triangle range such as <c>0:4-9</c>.
-        /// </summary>
-        /// <param name="text">Author input. Commas, semicolons, and any whitespace separate entries.</param>
-        /// <param name="addresses">
-        /// On success, the parsed addresses in input order. Duplicates are preserved so the caller can report
-        /// them rather than silently collapsing author input.
-        /// </param>
-        /// <param name="error">
-        /// On failure, a stable token: <c>malformed:&lt;token&gt;</c>, <c>invalid-range:&lt;token&gt;</c>, or
-        /// <c>too-large:&lt;token&gt;</c>.
-        /// </param>
-        /// <returns>True when the text parsed. Empty input succeeds and yields an empty list.</returns>
-        public static bool TryParseAddressList(string text, out RemovedTriangleAddress[] addresses, out string error)
-        {
-            addresses = Array.Empty<RemovedTriangleAddress>();
-            error = string.Empty;
-
-            if (string.IsNullOrEmpty(text) || text.Trim().Length == 0) return true;
-
-            var tokens = text.Split(new[] { ',', ';', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var result = new List<RemovedTriangleAddress>(tokens.Length);
-
-            for (var i = 0; i < tokens.Length; i++)
-            {
-                var token = tokens[i].Trim();
-                if (token.Length == 0) continue;
-
-                var separator = token.IndexOf(':');
-                if (separator <= 0 || separator == token.Length - 1)
-                {
-                    error = "malformed:" + token;
-                    addresses = Array.Empty<RemovedTriangleAddress>();
-                    return false;
-                }
-
-                if (!int.TryParse(
-                        token.Substring(0, separator),
-                        System.Globalization.NumberStyles.AllowLeadingSign,
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        out var subMesh))
-                {
-                    error = "malformed:" + token;
-                    addresses = Array.Empty<RemovedTriangleAddress>();
-                    return false;
-                }
-
-                var trianglePart = token.Substring(separator + 1);
-                var rangeSeparator = trianglePart.IndexOf('-', 1);
-
-                if (rangeSeparator < 0)
-                {
-                    if (!int.TryParse(
-                            trianglePart,
-                            System.Globalization.NumberStyles.AllowLeadingSign,
-                            System.Globalization.CultureInfo.InvariantCulture,
-                            out var triangle))
-                    {
-                        error = "malformed:" + token;
-                        addresses = Array.Empty<RemovedTriangleAddress>();
-                        return false;
-                    }
-
-                    result.Add(new RemovedTriangleAddress(subMesh, triangle));
-                    continue;
-                }
-
-                var startText = trianglePart.Substring(0, rangeSeparator);
-                var endText = trianglePart.Substring(rangeSeparator + 1);
-
-                if (!int.TryParse(startText, System.Globalization.NumberStyles.None,
-                        System.Globalization.CultureInfo.InvariantCulture, out var start)
-                    || !int.TryParse(endText, System.Globalization.NumberStyles.None,
-                        System.Globalization.CultureInfo.InvariantCulture, out var end)
-                    || end < start)
-                {
-                    error = "invalid-range:" + token;
-                    addresses = Array.Empty<RemovedTriangleAddress>();
-                    return false;
-                }
-
-                if ((long)end - start > 100000L)
-                {
-                    error = "too-large:" + token;
-                    addresses = Array.Empty<RemovedTriangleAddress>();
-                    return false;
-                }
-
-                for (var triangle = start; triangle <= end; triangle++)
-                {
-                    result.Add(new RemovedTriangleAddress(subMesh, triangle));
-                }
-            }
-
-            addresses = result.ToArray();
-            return true;
-        }
-
-        /// <summary>
         /// A short status line: how many triangles are removed in how many submeshes.
         /// </summary>
         public string Describe()
@@ -477,7 +360,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         /// <summary>
         /// Index of the first canonical entry that is not less than the address. Insertion at this index keeps
-        /// the array sorted in O(n) without re-sorting on every picked triangle.
+        /// the array sorted in O(n) without re-sorting the whole set on every added address.
         /// </summary>
         private int LowerBound(RemovedTriangleAddress address)
         {

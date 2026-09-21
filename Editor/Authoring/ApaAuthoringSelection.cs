@@ -435,6 +435,106 @@ namespace AvatarPartAssembler.Editor.Authoring
         }
 
         /// <summary>
+        /// Restores the two live armature references from the paths a draft or profile recorded.
+        /// </summary>
+        /// <param name="targetArmaturePath">
+        /// Avatar-root-relative path of the target armature, as <see cref="TargetArmaturePath"/> records it. The
+        /// empty string means "no selection was recorded" and restores nothing.
+        /// </param>
+        /// <param name="partArmaturePath">
+        /// Part-root-relative path of the part armature, as <see cref="PartArmaturePath"/> records it.
+        /// </param>
+        /// <remarks>
+        /// <para>
+        /// <b>Why a restore is needed at all.</b> The live <see cref="Transform"/> references are what the two
+        /// object fields show, but they are not what survives: a closed and reopened window, a layout restore, a
+        /// domain reload, and a freshly loaded profile can all come back with the paths intact and the references
+        /// gone. Without this the fields would draw as empty and the next edit anywhere in the Selection block
+        /// would re-record that emptiness, silently discarding a selection the profile still declares.
+        /// </para>
+        /// <para>
+        /// <b>Fill only by default.</b> A slot that already holds a live selection is left exactly as it is, so
+        /// reopening the window cannot override an author's current choice. Profile loading passes
+        /// <paramref name="replaceExisting"/> so that the newly loaded profile cannot accidentally retain the
+        /// previous draft's live references. This never substitutes for the explicit <see cref="SuggestArmatures"/>
+        /// flow, which stays the only thing that proposes an armature that was never selected.
+        /// </para>
+        /// <para>
+        /// <b>Nothing is invented.</b> A path that does not resolve — the hierarchy moved, the object was deleted,
+        /// or the root is not selected yet — is left in the draft, where the selection check reports it as the
+        /// missing armature it is
+        /// (<c>APA043 reason=missing-target-armature</c> / <c>reason=missing-part-armature</c>). Replacing it with
+        /// a guess or erasing the path would both hide a real defect. In replacement mode the stale live reference
+        /// is cleared, while the unresolved path remains available for validation and repair.
+        /// </para>
+        /// </remarks>
+        /// <param name="replaceExisting">
+        /// Replace the current live references from the supplied paths. Used when a different profile replaces the
+        /// draft; false keeps valid live choices and only fills missing references.
+        /// </param>
+        /// <returns>
+        /// A short description of what was restored — for the window's status line — or an empty string when
+        /// nothing was.
+        /// </returns>
+        public string RestoreArmatures(
+            string targetArmaturePath,
+            string partArmaturePath,
+            bool replaceExisting = false)
+        {
+            var restored = new List<string>();
+
+            if (replaceExisting || _targetArmature == null)
+            {
+                var resolved = ResolveArmaturePath(AvatarRootTransform, targetArmaturePath);
+                if (replaceExisting) _targetArmature = resolved;
+                if (resolved != null)
+                {
+                    _targetArmature = resolved;
+                    restored.Add("target='" + TargetArmaturePath + "'");
+                }
+            }
+
+            if (replaceExisting || _partArmature == null)
+            {
+                var resolved = ResolveArmaturePath(PartRootTransform, partArmaturePath);
+                if (replaceExisting) _partArmature = resolved;
+                if (resolved != null)
+                {
+                    _partArmature = resolved;
+                    restored.Add("part='" + PartArmaturePath + "'");
+                }
+            }
+
+            return restored.Count == 0 ? string.Empty : string.Join("; ", restored.ToArray());
+        }
+
+        /// <summary>
+        /// Resolves a recorded armature path under the root it is relative to.
+        /// </summary>
+        /// <param name="root">The avatar root or the part root, or null when it is not selected.</param>
+        /// <param name="path">
+        /// The recorded path. <see cref="ApaAvatarPath.Root"/> (<c>"."</c>) is the root itself; the empty string
+        /// is "no selection".
+        /// </param>
+        /// <remarks>
+        /// The same two rules <see cref="ApaArmatureScope.TryResolve"/> applies, without its diagnostic: the token
+        /// <c>"."</c> resolves to the root, and anything else must resolve <i>inside</i> the root. A path that
+        /// resolves elsewhere in the scene is refused rather than used, because an armature outside its own root
+        /// has no identity this pipeline could record. Returning null here is not a verdict — the caller keeps the
+        /// path and the selection check reports the condition with its own code and <c>reason=</c> token.
+        /// </remarks>
+        /// <returns>The resolved transform, or null when the path does not resolve inside the root.</returns>
+        public static Transform ResolveArmaturePath(Transform root, string path)
+        {
+            if (root == null || !ApaAvatarPath.HasIdentity(path)) return null;
+
+            var found = ApaAvatarPath.IsRoot(path) ? root : root.Find(path);
+            if (found == null) return null;
+
+            return found == root || found.IsChildOf(root) ? found : null;
+        }
+
+        /// <summary>
         /// Proposes the two armature selections from the live hierarchy, filling only the empty ones.
         /// </summary>
         /// <remarks>

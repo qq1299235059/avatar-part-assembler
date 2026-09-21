@@ -1,5 +1,101 @@
 # Changelog
 
+## [0.4.0] — vertex-color seam candidates, explicit overlays, mask-only removal
+
+This release publishes [0.3.0-rc.10], [0.3.0-rc.11], and [0.3.0-rc.12] together.
+
+- **Seam candidates are a vertex color** (`APA052 SEAM_CANDIDATE_COLOR_INVALID`). All four channels must match the
+  selected color exactly. The named `merge vertex` representation is retired: `ApaMergeVertexGroup` and
+  `ApaMergeVertexGroupResolver` are removed together with their tests, and `APA051 MERGE_VERTEX_GROUP_INVALID` keeps
+  its registered slot but is never emitted. The stored explicit seam pairs and the build-time seam decisions are
+  unchanged.
+- **Scene View overlays are explicit.** The red removal overlay is off by default, a green candidate overlay marks
+  what the selected color selects, and a merge-check mode previews a pairing without writing it. Overlays now run
+  through a registered callback with an explicit visibility plan and invalidate derived state when the selection,
+  draft, or Profile changes.
+- **Automatic seam generation filters only the part mesh by vertex color** and finds the target body spatially, so
+  target meshes no longer need vertex colors. Part-side missing, malformed, or unmatched colors still block with
+  `APA052` instead of falling back to every vertex.
+- **Removal Region is authored only through the texture mask.** Scene View triangle picking, numeric address entry,
+  submesh bulk-delete controls, and their manual-edit backend are removed; the stored removal set and mask sampler
+  are unchanged.
+- The candidate color is entered as strict `#RRGGBB` (optionally `#RRGGBBAA`) text, defaulting to opaque black
+  `#000000`. Profile loading runs in one isolated transition for both entry points.
+
+## [0.3.0-rc.12] — mask-only removal authoring and reliable preview overlays
+
+- Removal Region is now authored only through the texture mask. Scene View triangle picking, numeric address
+  entry, submesh bulk-delete controls, and their manual-edit backend have been removed; the stored removal set and
+  mask sampler remain unchanged.
+- Scene View overlays now use a registered callback and an explicit visibility plan. Removal, seam candidate, and
+  merge-check overlays invalidate derived state when the selection, draft, or Profile changes and reopen the master
+  Highlights gate when enabled.
+- The seam candidate color wheel was replaced by a strict `#RRGGBB` text field (with optional `#RRGGBBAA`). Invalid
+  codes keep the previous valid color and do not touch mesh caches; the default remains opaque black `#000000`.
+- Profile loading now uses one isolated transition for both entry points, replacing the draft and clearing all
+  derived caches before displaying the loaded asset.
+
+## [0.3.0-rc.11] — spatial target seams and authoring workflow polish
+
+- Automatic seam generation now filters only the **part** mesh by the selected vertex color. The target body is
+  searched spatially across all readable vertices, so target meshes do not need vertex colors. Part-side missing,
+  malformed, or unmatched colors still block with `APA052` and never fall back to all part vertices.
+- The default candidate color is opaque black `#000000`. Candidate resolution and merge-check work are deferred
+  while the Unity color picker is being dragged, avoiding a full `Mesh.colors32` read and spatial match per wheel
+  repaint.
+- Target and part armature object fields are restored from the profile's recorded relative paths when the window is
+  reopened or a profile is loaded.
+- `Load Existing Profile` is now at the top of the Part Authoring window. `Output` is below Bones and Blend Shapes
+  and above Actions.
+
+## [0.3.0-rc.10] — vertex-color seam candidates and controllable authoring overlays
+
+**Automatic seam generation now reads mesh vertex colors instead of a named `merge vertex` group, and the
+authoring Scene View overlays are explicit: the red removal overlay is off by default, a green candidate
+overlay marks what the selected color selects, and a merge-check mode previews the pairing without writing it.
+The assembled mesh, the stored seam pairs, and every build-time decision are unchanged.**
+
+### Changed
+
+- **Seam candidates are a vertex color (`APA052 SEAM_CANDIDATE_COLOR_INVALID`).** The Part Authoring window
+  exposes a `Candidate Color`; a vertex may pair only when all four channels of its `Mesh.colors32` entry equal
+  that color **exactly** — no tolerance, alpha included. Both the target body mesh and the part mesh are read in
+  their rest pose. A mesh that carries no vertex color, a color array whose length disagrees with the vertex
+  count, and a color no vertex carries all **block** with a stable `reason=` token
+  (`vertex-color-missing`, `vertex-color-count-mismatch`, `no-vertex-color-candidates`); there is no fallback to
+  every vertex. The stored explicit seam pairs and the public `ApaSeamWorldMatcher` overloads are unchanged.
+- **The named `merge vertex` representation is gone.** `ApaMergeVertexGroup` (the runtime component) and
+  `ApaMergeVertexGroupResolver` (the component/named-bone resolver) were removed, along with their tests. Unity
+  import pipelines routinely drop non-bone vertex groups while preserving mesh vertex colors, so a runtime
+  component or a bone name was never a contract the workflow could rely on. `APA051 MERGE_VERTEX_GROUP_INVALID`
+  is **retired**: the constant keeps its registered meaning and title so the code is never reused, and this build
+  never emits it. A scene that still carries the component shows Unity's missing-script notice; nothing else has
+  to be migrated, because the seam itself was always stored as explicit pairs.
+- **The red removal overlay is off by default.** A new `Removal Overlay` toggle in the Removal Region block
+  governs the draw, hover, and click paths, and arming `Pick Triangles In Scene` turns it on so a pick is never
+  blind. Its blend-shape-safe evaluated geometry is unchanged: when enabled, the triangles and picks still follow
+  a cached `BakeMesh` result while the removal set, the seam, and the build stay rest-pose data.
+- **The green candidate overlay** marks the vertices the selected color selects on both renderers, drawn from the
+  same rest-pose indices and positions seam generation reads, through each renderer's own transform, bounded by
+  the existing draw budget. A side whose candidates cannot be resolved draws nothing and reports the blocking
+  diagnostic in the window and in the Scene View label.
+- **The merge-check mode** is a separate toggle that hides the removal, candidate, and stored-seam overlays and
+  draws the prospective pairing of the selected candidates instead: matched target and part candidates in green,
+  candidates with no counterpart within the seam tolerance in red. It runs the same matcher with the same
+  candidate lists and the same tolerance, is cached per mesh, color, transform, candidate set, and tolerance, and
+  **writes nothing** — the stored seam and the profile are untouched. The mode *hides* the other overlays rather
+  than clearing their toggles, so switching it off restores exactly what was set before it.
+
+### Documentation and tests
+
+- Added focused editor tests for the Color32 comparison (including the alpha channel), missing and malformed
+  color data, candidate filtering, the merge-check matched/unmatched classification, the matcher-parity and
+  determinism of that classification, the "no write" property, and the overlay toggle precedence; the
+  evaluated-geometry overlay test now pins which half of the tool reads which pose.
+- README, README.zh-CN, `Documentation~/OVERVIEW.md`, the acceptance checklist, and the Simplified Chinese table
+  document the vertex-color contract, the selected color, the overlay controls, the merge-check mode, and the
+  `APA051` retirement.
+
 ## [0.3.0-rc.9] — named merge-vertex seam candidates and blend-shape-safe authoring preview
 
 ### Added

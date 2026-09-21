@@ -90,15 +90,73 @@ namespace AvatarPartAssembler.Editor.Authoring
         [SerializeField] private string _prefabPath = string.Empty;
         [SerializeField] private bool _captureSignatureOnTargetChange = true;
         [SerializeField] private bool _allowOverwrite;
-        [SerializeField] private bool _showHighlights = true;
-        [SerializeField] private ApaSceneToolMode _toolMode;
+        // These are the complete Scene View overlay controls. They live in the top toolbar so the author can see
+        // the active visual mode without scrolling to a mesh-specific section.
+        [SerializeField] private bool _showCandidateOverlay = true;
 
         /// <summary>World-space tolerance of the seam generator. Window state, never profile data.</summary>
         /// <remarks>
         /// The tolerance is an input of one authoring action; the profile stores the pairs it produced. Keeping
         /// it on the window is what makes the saved profile independent of the value the author happened to try.
+        /// The merge-check overlay reads the same value, so the prospective pairing is evaluated under exactly
+        /// the rule the generate action would use.
         /// </remarks>
         [SerializeField] private float _seamTolerance = ApaSeamWorldMatcher.DefaultTolerance;
+
+        /// <summary>
+        /// The vertex color that selects the seam candidates of the <b>part</b> mesh.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Window state, never profile data: the profile stores the pairs the generator wrote. Changing the color
+        /// therefore changes which vertices the <i>next</i> generation may pair and never rewrites an already
+        /// authored seam.
+        /// </para>
+        /// <para>
+        /// Stored as a <see cref="Color32"/> rather than a <see cref="Color"/> because that is the value the
+        /// comparison uses: the matcher compares all four 8-bit channels of <c>Mesh.colors32</c> exactly, so
+        /// keeping the author's choice in the same space removes any question of what a picker's float value
+        /// rounded to. The field that edits it is a text field reading a color code
+        /// (<see cref="ApaSeamColorCode"/>), so the value the author types is the value that is matched.
+        /// </para>
+        /// <para>
+        /// <b>Only the part is filtered by it.</b> The target body is matched spatially: every body vertex may
+        /// pair and position decides which ones do, so a body mesh without vertex colors is a normal body mesh.
+        /// The default is opaque black (<see cref="ApaSeamVertexColorCandidates.DefaultColor"/>), displayed as
+        /// <c>#000000</c>.
+        /// </para>
+        /// </remarks>
+        [SerializeField] private Color32 _seamCandidateColor = ApaSeamVertexColorCandidates.DefaultColor;
+
+        /// <summary>
+        /// Whether the red predicted-removal triangle overlay is drawn. Off by default.
+        /// </summary>
+        /// <remarks>
+        /// The overlay is a preview of one authoring input, not a permanent part of the Scene View, and on a
+        /// masked body it covers a large part of the mesh. It is drawn only while this is on, and it is the only
+        /// way the mask-generated removal set is visualized in the Scene View. Its switch is in the shared top
+        /// toolbar with the other two overlay modes.
+        /// </remarks>
+        [SerializeField] private bool _showRemovalOverlay;
+
+        /// <summary>
+        /// Whether the merge-check overlay is the active Scene View mode. Off by default.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The mode hides the removal, candidate, and stored-seam overlays and draws the prospective pairing of
+        /// the selected candidate colors instead: matched candidates in green, candidates with no counterpart
+        /// within the tolerance in red. It computes the pairing through the same matcher and tolerance seam
+        /// generation uses, and writes nothing — enabling it can never change the stored seam or the profile.
+        /// </para>
+        /// <para>
+        /// <b>It hides, it does not clear.</b> The removal and candidate toggles keep their values while the mode
+        /// is on, so switching the mode off restores exactly the overlays that were set before it. That is
+        /// deliberate: a mode that silently reset the author's toggles would make "leave the mode" a second,
+        /// invisible edit.
+        /// </para>
+        /// </remarks>
+        [SerializeField] private bool _mergeCheckOverlay;
 
         /// <summary>Whether the removal address list is expanded. Collapsed by default.</summary>
         [SerializeField] private bool _showAllAddresses;
@@ -123,10 +181,6 @@ namespace AvatarPartAssembler.Editor.Authoring
         [NonSerialized] private string _seamResultText = string.Empty;
         [NonSerialized] private MessageType _seamResultType = MessageType.None;
         [NonSerialized] private Vector2 _scroll;
-        [NonSerialized] private string _removalInput = string.Empty;
-        [NonSerialized] private int _removalSubMeshInput;
-        [NonSerialized] private int _removalTriangleInput;
-        [NonSerialized] private int _removalSubMeshClear;
 
         // Cached live checks. Recomputing them on every repaint would re-read mesh index buffers and compare the
         // saved profile's serialized content many times a second; they are recomputed on input events and after
@@ -136,14 +190,33 @@ namespace AvatarPartAssembler.Editor.Authoring
         [NonSerialized] private ValidationResult _seamCheck;
         [NonSerialized] private bool _liveChecksDirty = true;
 
-        // The resolved 'merge vertex' group of each side. Cached per change because resolving the bone path reads
-        // Mesh.boneWeights, which allocates a full copy of the mesh's skin data: doing that on every repaint of
-        // the seam block would allocate megabytes per frame on a real body mesh. The cache is refreshed whenever
-        // the live checks are invalidated (selection change, undo, an input event) and re-resolved unconditionally
-        // by the generate action, which is the one place the group is authoritative input.
-        [NonSerialized] private ApaMergeVertexGroupResult _targetMergeGroup;
-        [NonSerialized] private ApaMergeVertexGroupResult _partMergeGroup;
-        [NonSerialized] private bool _mergeGroupsResolved;
+        // The resolved seam candidates of each side, cached per change. Resolving the part side reads
+        // Mesh.colors32, which allocates a full Color32 copy of the mesh's color channel, and the Scene View merge
+        // check then runs the world-position matcher: doing that on every repaint — or on every keystroke of the
+        // color-code field — would allocate megabytes per second on a real part mesh. The cache owns the reuse
+        // rule (see ApaSeamCandidateCache), the Scene View overlay reads the same cached results through the host
+        // properties, and the generate action re-resolves unconditionally because that is the one place the
+        // candidates are authoritative input.
+        [NonSerialized] private ApaSeamCandidateCache _seamCandidates = new ApaSeamCandidateCache();
+
+        /// <summary>The candidate cache, materialized on first use after a deserialization.</summary>
+        private ApaSeamCandidateCache SeamCandidates =>
+            _seamCandidates ?? (_seamCandidates = new ApaSeamCandidateCache());
+
+        /// <summary>
+        /// The text the candidate-color code field is editing.
+        /// </summary>
+        /// <remarks>
+        /// A buffer rather than the color itself: the author's partially typed text has to stay visible while the
+        /// field is being edited, and the committed <see cref="Color32"/> has to stay valid while it is malformed.
+        /// It is derived from <see cref="_seamCandidateColor"/> the first time it is drawn and after any state
+        /// reset, so it can never disagree with the color that is actually matched.
+        /// </remarks>
+        [NonSerialized] private string _seamColorInput;
+
+        /// <summary>The localized reason the current text is not a color code, or empty.</summary>
+        [NonSerialized] private string _seamColorError = string.Empty;
+
         [NonSerialized] private string _existingProfileState;
         [NonSerialized] private bool _signatureSafetyStale;
         [NonSerialized] private bool _signatureIdentityStale;
@@ -190,8 +263,10 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// Opens the window on an existing profile, replacing whatever the window was editing.
         /// </summary>
         /// <remarks>
-        /// Used by the installer inspector's "Open Part Authoring" shortcut. The profile is read into a draft;
-        /// the asset itself is not modified until the author writes it explicitly.
+        /// Used by the installer inspector's "Open Part Authoring" shortcut. The profile is read into a draft
+        /// through the same transition the window's own load control uses
+        /// (<see cref="ApaProfileLoader"/>), so the two entry points cannot produce different state; the asset
+        /// itself is not modified until the author writes it explicitly.
         /// </remarks>
         public static ApaAuthoringWindow OpenWith(
             ApaPartProfile profile,
@@ -200,13 +275,6 @@ namespace AvatarPartAssembler.Editor.Authoring
             SkinnedMeshRenderer targetRenderer)
         {
             var window = Open();
-
-            if (profile != null)
-            {
-                window._draft = ApaProfileDraft.FromProfile(profile);
-                window._draft.EnsureStablePartId();
-                window._profilePath = AssetDatabase.GetAssetPath(profile) ?? string.Empty;
-            }
 
             if (partRoot != null)
             {
@@ -217,11 +285,18 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (avatarRoot != null) window._selection.AvatarRoot = avatarRoot;
             if (targetRenderer != null) window._selection.TargetRenderer = targetRenderer;
 
-            window._prefabPath = ApaAuthoringAssetPaths.DefaultPrefabPath(
-                window._selection.OutputFolder,
-                window._selection.PartRoot != null ? window._selection.PartRoot.name : "AvatarPart");
+            if (profile != null)
+            {
+                // The selection roots are assigned first, because the profile's recorded armature paths are
+                // resolved against them: the window must open with the selections the profile carries rather than
+                // two empty fields that the next edit would re-record as "no selection".
+                window.ApplyLoadedProfile(profile, AssetDatabase.GetAssetPath(profile));
+            }
+            else
+            {
+                window.InvalidateDerivedState();
+            }
 
-            window.MarkSelectionDirty();
             window.Repaint();
             return window;
         }
@@ -238,35 +313,38 @@ namespace AvatarPartAssembler.Editor.Authoring
         public ApaSeamSelection Seam => _draft.Seam;
 
         /// <inheritdoc />
-        public ApaSceneToolMode ToolMode => _toolMode;
+        public bool ShowCandidateOverlay => _showCandidateOverlay;
 
         /// <inheritdoc />
-        public bool ShowHighlights => _showHighlights;
+        public bool ShowRemovalOverlay => _showRemovalOverlay;
 
         /// <inheritdoc />
-        public void ToggleRemovalTriangle(RemovedTriangleAddress address)
+        public bool MergeCheckOverlay => _mergeCheckOverlay;
+
+        /// <inheritdoc />
+        public Color32 SeamCandidateColor => _seamCandidateColor;
+
+        /// <inheritdoc />
+        public float SeamTolerance => _seamTolerance;
+
+        /// <inheritdoc />
+        public ApaSeamColorCandidateResult TargetSeamCandidates
         {
-            Undo.RecordObject(this, Tr("Toggle Removal Triangle"));
-            _draft.Removal.Toggle(address);
-
-            MarkSelectionDirty();
-            Repaint();
+            get
+            {
+                EnsureSeamCandidates();
+                return _seamCandidates.Target;
+            }
         }
 
         /// <inheritdoc />
-        public void RemoveRemovalTriangle(RemovedTriangleAddress address)
+        public ApaSeamColorCandidateResult PartSeamCandidates
         {
-            Undo.RecordObject(this, Tr("Remove Removal Triangle"));
-            _draft.Removal.Remove(address);
-
-            MarkSelectionDirty();
-            Repaint();
-        }
-
-        /// <inheritdoc />
-        public void RepaintAuthoringWindow()
-        {
-            Repaint();
+            get
+            {
+                EnsureSeamCandidates();
+                return _seamCandidates.Part;
+            }
         }
 
         // ---- Lifetime -------------------------------------------------------------------------------
@@ -278,22 +356,22 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             if (_selection == null) _selection = new ApaAuthoringSelection();
             if (_draft == null) _draft = new ApaProfileDraft();
+            if (_seamCandidates == null) _seamCandidates = new ApaSeamCandidateCache();
             _draft.EnsureInitialized();
 
-            // The picking mode is serialized, so a window that is closed, reopened, or reloaded after a domain
-            // reload would otherwise re-arm a modal Scene View tool the author is not expecting: left clicks
-            // would stop selecting objects and start editing the removal set. Reopening therefore always starts
-            // with the tool off, and says so when it had been on.
-            if (_toolMode != ApaSceneToolMode.Off)
-            {
-                _toolMode = ApaSceneToolMode.Off;
-                _status = Tr("Picking was stopped because the window was reopened. Arm a picking mode again when " +
-                             "you want to edit removal triangles or seam vertices in the Scene View.");
-            }
+            // A reopened window — after a close, a layout restore, or a domain reload — can come back with the
+            // draft's recorded armature paths intact while the live Transform references it holds are gone. The
+            // paths are the durable half of the selection, so they are re-resolved here, before the first repaint
+            // draws the two object fields as empty and before any edit in the Selection block could re-record
+            // them. Nothing is invented: a path that does not resolve leaves the field empty and is reported by
+            // the selection check, and a selection the author made is never overwritten.
+            RestoreArmatureSelections();
 
+            // The Scene View callback is installed once per domain load by the registry, not by this window, so a
+            // reload can never leave the overlays without a callback. The window contributes its tool instance.
             _sceneTool = new ApaAuthoringSceneTool(this);
-            SceneView.duringSceneGui -= OnSceneGui;
-            SceneView.duringSceneGui += OnSceneGui;
+            ApaAuthoringSceneToolRegistry.Register(_sceneTool);
+
             Undo.undoRedoPerformed -= OnUndoRedo;
             Undo.undoRedoPerformed += OnUndoRedo;
 
@@ -307,7 +385,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void OnDisable()
         {
-            SceneView.duringSceneGui -= OnSceneGui;
+            ApaAuthoringSceneToolRegistry.Unregister(_sceneTool);
             Undo.undoRedoPerformed -= OnUndoRedo;
             Changed -= OnLanguageChanged;
 
@@ -333,22 +411,99 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void OnUndoRedo()
         {
-            // An undo can change a mesh in place without changing its instance or its size, and the Scene View
-            // tool's cached vertex and index arrays would then describe a mesh that no longer exists.
-            _sceneTool?.InvalidateMeshCache();
-            MarkSelectionDirty();
+            // An undo can change a mesh in place without changing its instance or its size, and every cached
+            // answer about the previous state — the vertex arrays, the resolved candidates, the merge-check
+            // classification — would then describe a mesh that no longer exists.
+            InvalidateDerivedState();
             Repaint();
             SceneView.RepaintAll();
-        }
-
-        private void OnSceneGui(SceneView view)
-        {
-            if (_sceneTool != null) _sceneTool.OnSceneGui(view);
         }
 
         private void MarkSelectionDirty()
         {
             _liveChecksDirty = true;
+        }
+
+        /// <summary>
+        /// Re-resolves the two live armature references from the draft's recorded paths.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The recorded <see cref="ApaBoneProfile.TargetArmaturePath"/> and
+        /// <see cref="ApaBoneProfile.PartArmaturePath"/> are the durable form of the armature selection: they
+        /// survive a domain reload, a window reopen, and a profile load, while the live <see cref="Transform"/>
+        /// references the object fields show do not. Every point at which the draft and the roots are both known —
+        /// <see cref="OnEnable"/>, a profile load, and a root change — therefore re-resolves the paths into the
+        /// live references before anything else reads the selection.
+        /// </para>
+        /// <para>
+        /// <b>It fills, it never replaces.</b> Only an empty slot is filled, so a selection the author made is
+        /// untouched and the suggestion flow stays what it is — a proposal for a genuinely empty selection. A path
+        /// that does not resolve is left in the draft and the field stays empty; the selection check reports it as
+        /// the missing armature it is, rather than the path being cleared or a different object being invented.
+        /// </para>
+        /// </remarks>
+        /// <returns>True when at least one live reference was restored.</returns>
+        private bool RestoreArmatureSelections(bool replaceExisting = false)
+        {
+            if (_selection == null || _draft == null) return false;
+
+            _draft.EnsureInitialized();
+
+            return !string.IsNullOrEmpty(_selection.RestoreArmatures(
+                _draft.Bones.TargetArmaturePath,
+                _draft.Bones.PartArmaturePath,
+                replaceExisting));
+        }
+
+        /// <summary>
+        /// Drops every cached value derived from the previous draft, selection, or mesh.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// One entry point, because a stale derived value is not a cosmetic problem: the resolved seam candidates,
+        /// the merge-check classification, the cached mesh arrays, the live checks, and the status lines are all
+        /// answers about <i>some</i> inputs, and every one of them would keep being served after the inputs were
+        /// replaced by a profile load, a new draft, an undo, or a selection change. A Scene View overlay reading a
+        /// stale answer is exactly the "the overlay is wrong or missing and nothing says why" failure this exists
+        /// to remove.
+        /// </para>
+        /// <para>
+        /// The candidate cache is invalidated rather than re-resolved: the resolution reads
+        /// <c>Mesh.colors32</c> and runs the world-position matcher, so it happens on the next read that actually
+        /// needs it — one resolution per change, not one per invalidation.
+        /// </para>
+        /// <para>
+        /// Nothing profile-owned is touched: the draft, the paths, the selection, and the author's candidate color
+        /// are the caller's to set. Only derived state is dropped.
+        /// </para>
+        /// </remarks>
+        private void InvalidateDerivedState()
+        {
+            SeamCandidates.Invalidate();
+            _sceneTool?.InvalidateMeshCache();
+
+            _validation = null;
+            _dryRun = null;
+            _lastWriteIssues = null;
+            _selectionIssues = null;
+            _removalCheck = null;
+            _seamCheck = null;
+            _draftDataIssues = null;
+            _existingProfileState = null;
+            _signatureSafetyStale = false;
+            _signatureIdentityStale = false;
+
+            // Status lines describe an action that was taken on the previous state, so they are dropped with it.
+            _maskResultText = string.Empty;
+            _maskResultType = MessageType.None;
+            _seamResultText = string.Empty;
+            _seamResultType = MessageType.None;
+            _seamColorError = string.Empty;
+            _seamColorInput = null;
+            _showAllAddresses = false;
+
+            MarkSelectionDirty();
         }
 
         // ---- Drawing --------------------------------------------------------------------------------
@@ -360,16 +515,20 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
+            // The section order is deliberate and is asserted by a source-contract test. Loading an existing
+            // profile is the first decision an author makes, so its control sits directly under the toolbar;
+            // Output sits between the bone/blend-shape policy it belongs to and the Actions that write it.
             DrawToolbar();
+            DrawProfileLoadSection();
             DrawSelectionSection();
             DrawSignatureSection();
             DrawIdentitySection();
-            DrawOutputSection();
             DrawRemovalSection();
             DrawSeamSection();
             DrawUvSection();
             DrawMaterialSection();
             DrawPolicySection();
+            DrawOutputSection();
             DrawActionsSection();
             DrawDiagnosticsSection();
 
@@ -377,7 +536,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             // the flag here means one recomputation per change rather than one per section. GUI.changed is the
             // safety net: any control or button that changed something during this pass sets it, so a mutation
             // whose handler forgot to call MarkSelectionDirty still invalidates the cache for the next pass. The
-            // explicit calls remain where the mutation happens outside OnGUI entirely (the Scene View tool) or
+            // explicit calls remain where the mutation happens outside OnGUI entirely (an undo, a profile load) or
             // where the same pass must already see the refreshed value.
             _liveChecksDirty = GUI.changed;
             if (_liveChecksDirty)
@@ -424,6 +583,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                 _draft = ApaProfileDraft.New("New Part", ApaPartSlot.Custom);
                 _profilePath = ApaAuthoringAssetPaths.DefaultProfilePath(_selection.OutputFolder, "New Part");
                 _prefabPath = ApaAuthoringAssetPaths.DefaultPrefabPath(_selection.OutputFolder, "New Part");
+                InvalidateDerivedState();
                 ClearResults(Tr("Started a new draft."));
             }
 
@@ -438,7 +598,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                 if (_selection.AdoptFromUnitySelection(UnityEditor.Selection.activeGameObject))
                 {
                     CaptureSignatureIfNeeded(true);
-                    MarkSelectionDirty();
+                    InvalidateDerivedState();
                     SetStatus(Tr("Adopted the Unity selection."));
                 }
                 else
@@ -448,23 +608,52 @@ namespace AvatarPartAssembler.Editor.Authoring
                 }
             }
 
+            // Keep all three visual switches in the open toolbar area. They are intentionally next to one another:
+            // removal (red), candidates/seams (green/cyan), and merge check (green/red prospective pairs).
+            var removalOverlay = GUILayout.Toggle(
+                _showRemovalOverlay,
+                Content(
+                    "Removal Overlay",
+                    "Show the red triangles selected by the removal mask in the Scene View."),
+                EditorStyles.toolbarButton,
+                GUILayout.Width(108));
+            if (removalOverlay != _showRemovalOverlay)
+            {
+                _showRemovalOverlay = removalOverlay;
+                SceneView.RepaintAll();
+            }
+
+            var candidateOverlay = GUILayout.Toggle(
+                _showCandidateOverlay,
+                Content(
+                    "Candidate Overlay",
+                    "Show the green seam-candidate vertices and the stored seam points in the Scene View."),
+                EditorStyles.toolbarButton,
+                GUILayout.Width(118));
+            if (candidateOverlay != _showCandidateOverlay)
+            {
+                _showCandidateOverlay = candidateOverlay;
+                SceneView.RepaintAll();
+            }
+
+            var mergeCheck = GUILayout.Toggle(
+                _mergeCheckOverlay,
+                Content(
+                    "Merge Check Overlay",
+                    "Show matched seam candidates in green and unmatched part candidates in red."),
+                EditorStyles.toolbarButton,
+                GUILayout.Width(122));
+            if (mergeCheck != _mergeCheckOverlay)
+            {
+                _mergeCheckOverlay = mergeCheck;
+                SceneView.RepaintAll();
+            }
+
             GUILayout.FlexibleSpace();
 
-            // The language selector is the last thing in the toolbar, so it is always in the same place and cannot
-            // be pushed off by a wider status line. Selecting a language repaints every open window, which is why
-            // the control the user just clicked is redrawn in the new language on the same frame.
+            // The language selector stays at the right edge. Selecting a language repaints every open window, which
+            // is why the control the user just clicked is redrawn in the new language on the same frame.
             LanguagePopup(null, GUILayout.Width(110));
-
-            _showHighlights = GUILayout.Toggle(
-                _showHighlights, Tr("Highlights"), EditorStyles.toolbarButton, GUILayout.Width(80));
-            if (_toolMode != ApaSceneToolMode.Off)
-            {
-                if (GUILayout.Button(Tr("Stop Picking"), EditorStyles.toolbarButton, GUILayout.Width(90)))
-                {
-                    _toolMode = ApaSceneToolMode.Off;
-                    SceneView.RepaintAll();
-                }
-            }
 
             EditorGUILayout.EndHorizontal();
 
@@ -472,6 +661,38 @@ namespace AvatarPartAssembler.Editor.Authoring
             {
                 EditorGUILayout.HelpBox(_status, MessageType.None);
             }
+        }
+
+        /// <summary>
+        /// The <c>Load Existing Profile</c> control, drawn directly under the toolbar.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// It sits above every other section because loading is the first decision an author makes: everything
+        /// below it — the selection, the signature, the removal region, the seam, the semantics — is either read
+        /// from the loaded profile or written into the draft that will replace it, so the control that chooses the
+        /// profile belongs before all of them rather than buried in the Output section.
+        /// </para>
+        /// <para>
+        /// The field always draws empty, and a value assigned during a drag loads that profile into the draft.
+        /// The asset is read, never written. There is deliberately no second copy of this control in the Output
+        /// section: two controls for one decision would be two places to look and two places to keep in step.
+        /// </para>
+        /// </remarks>
+        private void DrawProfileLoadSection()
+        {
+            EditorGUILayout.Space();
+
+            var loadTarget = (ApaPartProfile)EditorGUILayout.ObjectField(
+                Content(
+                    "Load Existing Profile",
+                    "Read a saved profile asset into the draft. The asset itself is never written until you save " +
+                    "it, and loading replaces the whole draft, so the fields below show the loaded profile."),
+                null,
+                typeof(ApaPartProfile),
+                false);
+
+            if (loadTarget != null) LoadProfile(loadTarget);
         }
 
         private void DrawSelectionSection()
@@ -519,6 +740,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             {
                 var targetChanged = !ReferenceEquals(target, _selection.TargetRenderer);
                 var rootChanged = !ReferenceEquals(avatarRoot, _selection.AvatarRoot);
+                var rootsChanged = rootChanged || !ReferenceEquals(partRoot, _selection.PartRoot);
                 var armatureChanged = !ReferenceEquals(targetArmature, _selection.TargetArmature)
                                       || !ReferenceEquals(partArmature, _selection.PartArmature);
 
@@ -531,15 +753,32 @@ namespace AvatarPartAssembler.Editor.Authoring
                 _selection.OutputFolder = outputFolder;
 
                 // The paths are recorded from the live objects here, which is the one moment both the objects and
-                // the roots they belong to are known.
-                Undo.RecordObject(this, Tr("Select Armatures"));
-                _draft.SetArmatures(
-                    _selection.AvatarRootTransform,
-                    targetArmature,
-                    _selection.PartRoot != null ? _selection.PartRoot.transform : null,
-                    partArmature);
+                // the roots they belong to are known — but only when the armature selection itself was edited, or
+                // when a root moved so the recorded paths have to be re-based. Rewriting them on every unrelated
+                // edit in this block (the output folder, the part renderer) would erase a path whose object could
+                // not be restored — a reopened window, or a profile loaded before its hierarchy was selected —
+                // which is author data the draft must keep and the selection check reports.
+                if (armatureChanged || rootsChanged)
+                {
+                    Undo.RecordObject(this, Tr("Select Armatures"));
 
-                MarkSelectionDirty();
+                    // A root moved without the armature fields being touched: re-resolve the recorded paths
+                    // against the new root first, so a selection that still resolves is re-recorded rather than
+                    // dropped.
+                    if (!armatureChanged) RestoreArmatureSelections();
+
+                    _draft.SetArmatures(
+                        _selection.AvatarRootTransform,
+                        _selection.TargetArmature,
+                        _selection.PartRoot != null ? _selection.PartRoot.transform : null,
+                        _selection.PartArmature);
+                }
+
+                // The selection is the input every derived answer is about — the candidates are resolved from
+                // these meshes and the merge check pairs these two renderers — so a changed selection drops all of
+                // them here rather than leaving a Scene View overlay to serve the previous pair's answer.
+                if (targetChanged || rootsChanged || armatureChanged) InvalidateDerivedState();
+
                 if (rootChanged || targetChanged) CaptureSignatureIfNeeded(false);
                 if (armatureChanged) SetStatus(TrFormat("Armatures: {0}.", _draft.Bones.DescribeArmatures()));
             }
@@ -554,7 +793,18 @@ namespace AvatarPartAssembler.Editor.Authoring
                 {
                     Undo.RecordObject(this, Tr("Find Avatar Root"));
                     _selection.AvatarRoot = ApaAuthoringSelection.FindAvatarRoot(anchor).gameObject;
-                    MarkSelectionDirty();
+
+                    // The recorded target-armature path is relative to the avatar root, so a new root re-bases it.
+                    // A selection that no longer resolves is kept as it was: the selection check reports it
+                    // rather than the path being silently dropped.
+                    RestoreArmatureSelections();
+                    _draft.SetArmatures(
+                        _selection.AvatarRootTransform,
+                        _selection.TargetArmature,
+                        _selection.PartRoot != null ? _selection.PartRoot.transform : null,
+                        _selection.PartArmature);
+
+                    InvalidateDerivedState();
                     CaptureSignatureIfNeeded(false);
                 }
             }
@@ -568,7 +818,7 @@ namespace AvatarPartAssembler.Editor.Authoring
                     _selection.TargetArmature,
                     _selection.PartRoot != null ? _selection.PartRoot.transform : null,
                     _selection.PartArmature);
-                MarkSelectionDirty();
+                InvalidateDerivedState();
                 SetStatus(TrFormat("Armature proposal: {0}.", proposal));
             }
 
@@ -688,6 +938,22 @@ namespace AvatarPartAssembler.Editor.Authoring
                    "derived from the name."), EditorStyles.miniLabel);
         }
 
+        /// <summary>
+        /// The Output section: where the profile asset and the part prefab are written.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// It is drawn directly below <c>Bones And Blend Shapes</c> and directly above <c>Actions</c>, because
+        /// that is the order the work happens in: the policy above it is the last authoring decision, this section
+        /// names what will be written, and the Actions below it perform the writes. Nothing here validates or
+        /// writes on its own; the path fields only feed <see cref="ApaProfileWriter"/> and
+        /// <see cref="ApaPrefabGenerator"/>.
+        /// </para>
+        /// <para>
+        /// The <c>Load Existing Profile</c> control is <b>not</b> duplicated here: it is drawn once, at the top of
+        /// the window, because loading replaces the whole draft rather than only the output paths.
+        /// </para>
+        /// </remarks>
         private void DrawOutputSection()
         {
             EditorGUILayout.Space();
@@ -759,14 +1025,31 @@ namespace AvatarPartAssembler.Editor.Authoring
                         ApaAuthoringAssetPaths.DescribePathReason(
                             reason, ApaAuthoringAssetPaths.ProfileExtension)), MessageType.Error);
             }
-
-            // Drop target for loading: the field always draws empty, and a value assigned during a drag loads
-            // that profile into the draft. The asset is read, never written.
-            var loadTarget = (ApaPartProfile)EditorGUILayout.ObjectField(
-                Tr("Load Existing Profile"), null, typeof(ApaPartProfile), false);
-            if (loadTarget != null) LoadProfile(loadTarget);
         }
 
+        /// <summary>
+        /// The Removal Region: the texture mask, the selection it generated, and the read-only overlay toggle.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Mask-only (M16).</b> The removal set is authored by the texture mask and by nothing else. The Scene
+        /// View pick mode, the per-triangle toggle and remove controls, the submesh and triangle number fields,
+        /// the address text field, the Add Address / Add List buttons, and the submesh bulk-delete button are all
+        /// gone, along with the backend that served them: a removal region is a painted region, and every manual
+        /// path was a second way to describe the same set that could disagree with the mask and with itself.
+        /// </para>
+        /// <para>
+        /// What remains is exactly the mask workflow: the mask inputs and the Apply action
+        /// (<see cref="DrawTextureMaskSection"/>), the generated selection's summary and bounded review
+        /// (<see cref="DrawAddressList"/>), the structural check, and the two bulk operations that act on the
+        /// canonical set as a whole — <c>Clear</c> and the mask's own Replace / Add / Subtract modes. None of them
+        /// selects an individual triangle, and none of them is a second authoring surface for the mask.
+        /// </para>
+        /// <para>
+        /// The red overlay toggle lives here because this is the only place the removal set is authored: it is a
+        /// visualization of the mask's result, never an editing surface.
+        /// </para>
+        /// </remarks>
         private void DrawRemovalSection()
         {
             EditorGUILayout.Space();
@@ -776,58 +1059,15 @@ namespace AvatarPartAssembler.Editor.Authoring
             EditorGUILayout.LabelField(Tr("Selected"), mask.Describe());
 
             EditorGUILayout.BeginHorizontal();
-            DrawModeButton(ApaSceneToolMode.RemovalTriangles, Tr("Pick Triangles In Scene"));
             if (GUILayout.Button(Tr("Clear"), GUILayout.Width(60)))
             {
                 Undo.RecordObject(this, Tr("Clear Removal Mask"));
                 mask.Clear();
                 MarkSelectionDirty();
-            }
-
-            EditorGUILayout.LabelField(Tr("Submesh"), GUILayout.Width(56));
-            _removalSubMeshClear = Mathf.Max(0, EditorGUILayout.IntField(_removalSubMeshClear, GUILayout.Width(36)));
-            if (GUILayout.Button(Tr("Remove All In Submesh"), GUILayout.Width(160)))
-            {
-                Undo.RecordObject(this, Tr("Remove Submesh Triangles"));
-                var removed = mask.RemoveSubMesh(_removalSubMeshClear);
-                MarkSelectionDirty();
-                SetStatus(TrFormat(
-                    "Removed {0} address(es) from submesh {1}.", removed, _removalSubMeshClear));
+                SceneView.RepaintAll();
             }
 
             EditorGUILayout.EndHorizontal();
-
-            // Numeric fallback: the picker is convenient, but a list is what makes a removal set reviewable and
-            // reproducible, and it is the only way to author a triangle that is hidden or hard to click.
-            EditorGUILayout.BeginHorizontal();
-            _removalSubMeshInput = Mathf.Max(0, EditorGUILayout.IntField(_removalSubMeshInput, GUILayout.Width(40)));
-            _removalTriangleInput = Mathf.Max(0, EditorGUILayout.IntField(_removalTriangleInput, GUILayout.Width(60)));
-            if (GUILayout.Button(Tr("Add Address"), GUILayout.Width(100)))
-            {
-                AddRemovalAddresses(new[] { new RemovedTriangleAddress(_removalSubMeshInput, _removalTriangleInput) });
-            }
-
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.BeginHorizontal();
-            _removalInput = EditorGUILayout.TextField(Tr("Addresses"), _removalInput);
-            if (GUILayout.Button(Tr("Add List"), GUILayout.Width(80)))
-            {
-                if (ApaRemovalMask.TryParseAddressList(_removalInput, out var parsed, out var error))
-                {
-                    AddRemovalAddresses(parsed);
-                    _removalInput = string.Empty;
-                }
-                else
-                {
-                    SetStatus(TrFormat("Removal address list not parsed: {0}", error));
-                }
-            }
-
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUILayout.LabelField(
-                Tr("Format: submesh:triangle, for example 0:12, 0:13, 1:4-9"), EditorStyles.miniLabel);
 
             DrawTextureMaskSection(mask);
 
@@ -842,9 +1082,10 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <remarks>
         /// <para>
         /// The conversion itself lives in <see cref="ApaRemovalMaskSampler"/>; this method only draws controls and
-        /// reports what that utility returned. The block is the third way to author a removal set, beside the
-        /// Scene View picker (small corrections) and the numeric address list (exact, reproducible entries), and
-        /// all three write into the same canonical <see cref="ApaRemovalMask"/> through the same methods.
+        /// reports what that utility returned. This block is the <b>only</b> way a removal set is authored (M16):
+        /// the Scene View pick mode and the numeric address list it used to sit beside were removed with
+        /// mask-only removal authoring, and what they wrote went into the same canonical
+        /// <see cref="ApaRemovalMask"/> this block writes through the same methods.
         /// </para>
         /// <para>
         /// Applying is disabled while the mask cannot possibly run — no target mesh, no mask texture, an
@@ -1099,6 +1340,30 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// this replaces.
         /// </para>
         /// <para>
+        /// <b>Which part vertices may pair is a color code (M16).</b> The block exposes the candidate color as a
+        /// strict <c>#RRGGBB</c> / <c>#RRGGBBAA</c> text field and states the part's candidate count — or the
+        /// blocking <c>APA052</c> diagnostic — before the action runs, and the merge-check toggle below the action
+        /// draws the prospective pairing in the Scene View without writing anything. The Unity color wheel is gone:
+        /// it named a value in float space that had to be rounded back into the 8-bit space the comparison uses,
+        /// and it emitted a change per frame while it was dragged. The previous named <c>merge vertex</c> group (a
+        /// component or a bone) is gone as well: Unity import pipelines routinely drop non-bone vertex groups
+        /// while preserving mesh vertex colors.
+        /// </para>
+        /// <para>
+        /// <b>The target side is spatial (M15).</b> The body is not required to carry vertex colors: every target
+        /// vertex may pair and the world-position matcher decides which ones do, so the status line for that side
+        /// describes a spatial candidate set rather than a color-filtered one, and a color-less body generates a
+        /// seam normally. Only the part side is restricted by the selected color, and it never falls back to every
+        /// part vertex when the color does not resolve.
+        /// </para>
+        /// <para>
+        /// <b>Typing does not drive the expensive path.</b> The code is parsed strictly, and only a well-formed
+        /// code that names a different color commits: it invalidates the resolved candidates and the merge-check
+        /// classification exactly once, and the next read re-resolves. Malformed or incomplete text commits
+        /// nothing and keeps the previous valid color, so no keystroke can rebuild the candidate arrays or select a
+        /// color the author did not type.
+        /// </para>
+        /// <para>
         /// The whole edit is one undo step: generating either replaces the seam or leaves it alone, and a half
         /// applied pairing is not a state anyone asked for.
         /// </para>
@@ -1127,16 +1392,18 @@ namespace AvatarPartAssembler.Editor.Authoring
                 ApaSeamWorldMatcher.MinimumTolerance,
                 ApaSeamWorldMatcher.MaximumTolerance);
 
-            // The group is what makes "which vertices may pair" an inspectable answer, so the window states both
-            // sides before the action runs: how many candidates there are, which representation supplied them,
-            // and — when a side has no usable group — the blocking diagnostic, in the same words the action will
-            // report. It never says "all vertices", because that state no longer exists.
-            EnsureMergeVertexGroups();
+            DrawCandidateColorCode();
+
+            // The candidates are what makes "which vertices may pair" an inspectable answer, so the window states
+            // both sides before the action runs: the part's colored candidates, the target's spatial candidate
+            // set, and — when a side has no usable candidate policy — the blocking diagnostic, in the same words
+            // the action will report. The part side never says "all vertices", because that state does not exist.
+            EnsureSeamCandidates();
             EditorGUILayout.LabelField(
-                TrFormat("Target merge vertex group: {0}", DescribeMergeGroup(_targetMergeGroup)),
+                TrFormat("Target seam candidates: {0}", DescribeCandidates(SeamCandidates.Target)),
                 EditorStyles.miniLabel);
             EditorGUILayout.LabelField(
-                TrFormat("Part merge vertex group: {0}", DescribeMergeGroup(_partMergeGroup)),
+                TrFormat("Part seam candidates: {0}", DescribeCandidates(SeamCandidates.Part)),
                 EditorStyles.miniLabel);
 
             EditorGUILayout.BeginHorizontal();
@@ -1159,9 +1426,9 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             EditorGUILayout.LabelField(
                 Tr("Both meshes are read in their rest pose (the shared mesh, never a baked pose) and every " +
-                   "world-coincident pair within the tolerance is written as one weld — but only vertices of " +
-                   "the named 'merge vertex' group may pair. Leave the seam empty when this part does not " +
-                   "weld to the body."),
+                   "world-coincident pair within the tolerance is written as one weld. Only part vertices that " +
+                   "carry the selected candidate color may pair; the target body is matched spatially and needs " +
+                   "no vertex colors. Leave the seam empty when this part does not weld to the body."),
                 EditorStyles.miniLabel);
 
             if (!seam.IsEmpty && !seam.IsPaired)
@@ -1181,6 +1448,120 @@ namespace AvatarPartAssembler.Editor.Authoring
         }
 
         /// <summary>
+        /// The candidate color code field: the strict text field that replaced the Unity color wheel.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The field shows <c>#RRGGBB</c> — <c>#RRGGBBAA</c> when the stored alpha is not opaque — and accepts
+        /// exactly those two forms (see <see cref="ApaSeamColorCode"/>). It is drawn beside a read-only swatch of
+        /// the value that is actually in effect, so the author can see at a glance which color the matcher will
+        /// compare even while the text is malformed.
+        /// </para>
+        /// <para>
+        /// The swatch is a plain <see cref="EditorGUI.DrawRect"/> rather than a read-only
+        /// A disabled color-picker widget would still be the color-wheel control this iteration removed from the
+        /// seam UI, and leaving one in place would keep the wheel one click away.
+        /// </para>
+        /// <para>
+        /// The text buffer is derived from the committed color whenever it is absent, so it can never display a
+        /// code that disagrees with the color the matcher uses — after a reset, or after a commit that
+        /// canonicalized the spelling.
+        /// </para>
+        /// </remarks>
+        private void DrawCandidateColorCode()
+        {
+            if (_seamColorInput == null) _seamColorInput = ApaSeamColorCode.Format(_seamCandidateColor);
+
+            EditorGUILayout.BeginHorizontal();
+
+            EditorGUI.BeginChangeCheck();
+
+            var text = EditorGUILayout.TextField(
+                Content(
+                    "Candidate Color Code",
+                    "The vertex color that marks a seam candidate on the part mesh, written as #RRGGBB. " +
+                    "#RRGGBBAA is accepted as well, and is shown when the alpha is not opaque. A part vertex may " +
+                    "pair only when all four channels of its stored Mesh.colors32 entry equal this color exactly " +
+                    "— there is no tolerance, and the alpha channel participates. The target body mesh is not " +
+                    "filtered by color: its vertices are matched by world position. Paint the part's seam ring " +
+                    "with this color in the modelling tool, or write Mesh.colors32 before generating the seam."),
+                _seamColorInput);
+
+            if (EditorGUI.EndChangeCheck()) CommitSeamColorCode(text);
+
+            // A read-only swatch of the committed color. Plain rect: no color-wheel control is drawn anywhere in
+            // this window any more.
+            var swatch = GUILayoutUtility.GetRect(
+                24f,
+                EditorGUIUtility.singleLineHeight,
+                GUILayout.Width(24f));
+            EditorGUI.DrawRect(swatch, _seamCandidateColor);
+
+            EditorGUILayout.EndHorizontal();
+
+            if (!string.IsNullOrEmpty(_seamColorError))
+            {
+                EditorGUILayout.HelpBox(_seamColorError, MessageType.Error);
+            }
+
+            EditorGUILayout.LabelField(
+                TrFormat(
+                    "Matched color: {0} (exact Color32 equality, alpha included)",
+                    ApaSeamVertexColorCandidates.Format(_seamCandidateColor)),
+                EditorStyles.miniLabel);
+        }
+
+        /// <summary>
+        /// Commits a typed color code: the parsed color on a valid edit, the previous color on malformed input.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The rule lives in <see cref="ApaSeamColorCode.TryApply"/> so it can be tested without a window; this
+        /// method only applies its verdict to the window's state and reports it.
+        /// </para>
+        /// <para>
+        /// <b>One invalidation per committed edit.</b> A valid code that names a different color drops the
+        /// resolved candidates and the merge-check classification exactly once, and the next read re-resolves.
+        /// Malformed text and a code that merely re-states the current color invalidate nothing, so no keystroke
+        /// of an incomplete code and no retyped code can make the window read <c>Mesh.colors32</c> or run the
+        /// world-position matcher.
+        /// </para>
+        /// </remarks>
+        private void CommitSeamColorCode(string text)
+        {
+            _seamColorInput = text ?? string.Empty;
+
+            if (!ApaSeamColorCode.TryApply(_seamColorInput, _seamCandidateColor, out var applied, out var changed))
+            {
+                _seamColorError = TrFormat(
+                    "Color code '{0}' is not a color. Write #RRGGBB, or #RRGGBBAA to include the alpha channel; " +
+                    "the previous color {1} is still in effect.",
+                    _seamColorInput,
+                    ApaSeamColorCode.Format(_seamCandidateColor));
+                return;
+            }
+
+            _seamColorError = string.Empty;
+
+            if (!changed)
+            {
+                // The code names the color already in effect: canonicalize the spelling and leave every cached
+                // answer alone, so a repeated edit costs nothing.
+                _seamColorInput = ApaSeamColorCode.Format(_seamCandidateColor);
+                return;
+            }
+
+            _seamCandidateColor = applied;
+
+            // The mesh arrays and the merge-check classification are keyed on the resolved candidate results, so
+            // dropping the results is what invalidates the classification too; the meshes themselves did not
+            // change, so their vertex arrays are deliberately kept.
+            SeamCandidates.Invalidate();
+            MarkSelectionDirty();
+            SceneView.RepaintAll();
+        }
+
+        /// <summary>
         /// One line describing whether the seam is paired, legacy, or empty, and what the profile will store.
         /// </summary>
         private static string DescribeSeamPairingState(ApaSeamSelection seam)
@@ -1194,12 +1575,19 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </summary>
         /// <remarks>
         /// <para>
-        /// <b>Only the named group may pair.</b> Both candidate lists are resolved from the <c>merge vertex</c>
-        /// group contract (<see cref="ApaMergeVertexGroupResolver"/>) and handed to the matcher's candidate
-        /// overload, so a vertex outside the group is never paired no matter how well it coincides. A side whose
-        /// group is missing, empty, ambiguous, or malformed is refused with <c>APA051</c> before the matcher runs;
-        /// there is deliberately no path from "no group" to "every vertex", because that fallback is the defect
-        /// this contract exists to remove.
+        /// <b>Only the part's selected candidate color restricts the pairing.</b> The part's candidate list is
+        /// resolved from the vertex-color contract (<see cref="ApaSeamVertexColorCandidates"/>) and handed to the
+        /// matcher's candidate overload, so a part vertex that does not carry the selected color is never paired
+        /// no matter how well it coincides. A part mesh that carries no color, carries a malformed color array, or
+        /// carries no vertex of that color is refused with <c>APA052</c> before the matcher runs; there is
+        /// deliberately no path from "no candidate" to "every vertex", because that fallback is the defect this
+        /// contract exists to remove.
+        /// </para>
+        /// <para>
+        /// <b>The target side is spatial.</b> Its candidate policy is "every body vertex"
+        /// (<see cref="ApaSeamSpatialTargetCandidates"/>), which the matcher receives as its documented all-vertices
+        /// argument. A body mesh without vertex colors therefore generates a seam normally — the target side has no
+        /// color to be missing.
         /// </para>
         /// <para>
         /// A refusal leaves the existing selection untouched: the action reports its diagnostic in the seam
@@ -1208,22 +1596,24 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private void GenerateWorldSeam(ApaSeamSelection seam)
         {
-            // Re-resolved here rather than read from the display cache: the group is the authoritative input of
-            // this action, and a component edited in the Inspector changes it without any repaint-time signal.
-            RefreshMergeVertexGroups();
+            // Re-resolved here rather than read from the display cache: the candidate color and the meshes are
+            // the authoritative inputs of this action, and a mesh edited outside the window changes its colors
+            // without any repaint-time signal. Storing the fresh results also refreshes the display cache, so the
+            // counts drawn after this action describe exactly what was matched.
+            RefreshSeamCandidates();
 
-            var targetGroup = _targetMergeGroup;
-            var partGroup = _partMergeGroup;
+            var targetCandidates = SeamCandidates.Target;
+            var partCandidates = SeamCandidates.Part;
 
-            if (!targetGroup.Succeeded)
+            if (targetCandidates == null || !targetCandidates.Succeeded)
             {
-                FailSeamGeneration(targetGroup.Issue);
+                FailSeamGeneration(targetCandidates != null ? targetCandidates.Issue : null);
                 return;
             }
 
-            if (!partGroup.Succeeded)
+            if (partCandidates == null || !partCandidates.Succeeded)
             {
-                FailSeamGeneration(partGroup.Issue);
+                FailSeamGeneration(partCandidates != null ? partCandidates.Issue : null);
                 return;
             }
 
@@ -1233,8 +1623,8 @@ namespace AvatarPartAssembler.Editor.Authoring
                 _selection.PartRenderer,
                 _selection.PartMesh,
                 _seamTolerance,
-                targetGroup.Indices,
-                partGroup.Indices);
+                targetCandidates.MatcherCandidateIndices,
+                partCandidates.Indices);
 
             if (!result.Succeeded)
             {
@@ -1273,33 +1663,55 @@ namespace AvatarPartAssembler.Editor.Authoring
             Repaint();
         }
 
-        /// <summary>Re-resolves both sides' <c>merge vertex</c> groups.</summary>
-        private void RefreshMergeVertexGroups()
+        /// <summary>
+        /// Re-resolves both sides' seam candidates: the target spatially, the part from the selected color.
+        /// </summary>
+        /// <remarks>
+        /// The two sides deliberately use two different policies — see
+        /// <see cref="ApaSeamSpatialTargetCandidates"/> and <see cref="ApaSeamVertexColorCandidates"/> — and the
+        /// results are stored in the cache together, so a reader never sees one side of a pair that was resolved
+        /// against different inputs.
+        /// </remarks>
+        private void RefreshSeamCandidates()
         {
-            _targetMergeGroup = ApaMergeVertexGroupResolver.Resolve(
-                _selection.TargetRenderer, _selection.TargetMesh, ApaMergeVertexGroupResolver.TargetSide);
-            _partMergeGroup = ApaMergeVertexGroupResolver.Resolve(
-                _selection.PartRenderer, _selection.PartMesh, ApaMergeVertexGroupResolver.PartSide);
-            _mergeGroupsResolved = true;
+            var target = ApaSeamSpatialTargetCandidates.Resolve(_selection.TargetRenderer, _selection.TargetMesh);
+            var part = ApaSeamVertexColorCandidates.ResolvePartCandidates(
+                _selection.PartRenderer, _selection.PartMesh, _seamCandidateColor);
+
+            SeamCandidates.Store(target, part);
         }
 
         /// <summary>
-        /// Resolves both groups at most once per change, for the seam block's two status lines.
+        /// Resolves both candidate policies at most once per change, for the seam block's status lines and the
+        /// Scene View overlay.
         /// </summary>
-        private void EnsureMergeVertexGroups()
+        /// <remarks>
+        /// <para>
+        /// The Scene View tool reads the results through the host properties, so a repaint that also draws the
+        /// overlay still reads one resolution per change rather than one per surface.
+        /// </para>
+        /// <para>
+        /// The expensive path — reading <c>Mesh.colors32</c> and rebuilding the candidate arrays — is entered
+        /// only when the cache says the inputs changed. The color-code field commits at most one change per valid
+        /// code (see <see cref="CommitSeamColorCode"/>), so typing an incomplete code resolves nothing, and the
+        /// generate action re-resolves unconditionally.
+        /// </para>
+        /// </remarks>
+        private void EnsureSeamCandidates()
         {
-            if (_mergeGroupsResolved && !_liveChecksDirty) return;
-            RefreshMergeVertexGroups();
+            if (!SeamCandidates.NeedsRefresh(_liveChecksDirty)) return;
+            RefreshSeamCandidates();
         }
 
         /// <summary>
-        /// One line describing a resolved group: its candidate count and source, or the blocking diagnostic that
-        /// stops the generator. Never a fallback description, because there is no fallback.
+        /// One line describing a resolved candidate set: its count and the policy that produced it, or the
+        /// blocking diagnostic that stops the generator. Never a fallback description, because there is no
+        /// fallback.
         /// </summary>
-        private static string DescribeMergeGroup(ApaMergeVertexGroupResult group)
+        private static string DescribeCandidates(ApaSeamColorCandidateResult candidates)
         {
-            if (group == null) return Tr("not resolved");
-            return group.Succeeded ? group.Describe() : ApaDiagnosticText.FormatShort(group.Issue);
+            if (candidates == null) return Tr("not resolved");
+            return candidates.Succeeded ? candidates.Describe() : ApaDiagnosticText.FormatShort(candidates.Issue);
         }
 
         private void DrawUvSection()
@@ -1702,35 +2114,22 @@ namespace AvatarPartAssembler.Editor.Authoring
             DrawIssueList(matching ?? new List<ValidationIssue>(), emptyMessage);
         }
 
-        private void DrawModeButton(ApaSceneToolMode mode, string label)
-        {
-            var active = _toolMode == mode;
-            var toggled = GUILayout.Toggle(active, label, "Button", GUILayout.Width(170));
-
-            if (toggled == active) return;
-
-            _toolMode = active ? ApaSceneToolMode.Off : mode;
-            SetStatus(_toolMode == ApaSceneToolMode.Off
-                ? Tr("Picking stopped.")
-                : Tr("Picking in the Scene View. Left click toggles, shift or control click removes."));
-            SceneView.RepaintAll();
-        }
-
         /// <summary>
-        /// The removal address list: a collapsed summary by default, with a bounded expanded view.
+        /// The removal address list: a read-only review of the set the mask generated.
         /// </summary>
         /// <remarks>
         /// <para>
         /// A mask-generated selection routinely holds thousands of addresses, and drawing one row per address
         /// buried every control below it. The list is therefore a summary line — the label carries the total, so
         /// the count is always visible — plus an explicit expansion that draws at most
-        /// <see cref="MaxExpandedAddressRows"/> rows, each with its own remove button, and states how many are not
-        /// shown.
+        /// <see cref="MaxExpandedAddressRows"/> rows and states how many are not shown.
         /// </para>
         /// <para>
-        /// <b>Nothing is lost by collapsing it.</b> The numeric address input and the mask's Replace / Add To
-        /// Selection / Subtract From Selection modes are the precise correction tools, and they operate on the
-        /// whole canonical set. The list is a review affordance, not the only way to edit.
+        /// <b>Review only (M16).</b> The rows carry no per-triangle remove button: individual triangle editing is
+        /// gone with the pick mode and the address entry fields, and a remove button here would be exactly the
+        /// manual path this iteration removed. The set is corrected by re-applying the mask — Replace, Add To
+        /// Selection, or Subtract From Selection — which is the one operation that acts on the whole canonical
+        /// set, and by <c>Clear</c>.
         /// </para>
         /// <para>
         /// <see cref="MaxListedRows"/> is deliberately left alone: it is shared with the other lists in the
@@ -1769,46 +2168,18 @@ namespace AvatarPartAssembler.Editor.Authoring
             var shown = Mathf.Min(mask.Count, budget);
             for (var i = 0; i < shown; i++)
             {
-                var address = mask.GetAddress(i);
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField(address.ToString(), EditorStyles.miniLabel, GUILayout.Width(220));
-                if (GUILayout.Button(Tr("Remove"), GUILayout.Width(80)))
-                {
-                    Undo.RecordObject(this, Tr("Remove Removal Triangle"));
-                    mask.Remove(address);
-                    MarkSelectionDirty();
-                    EditorGUILayout.EndHorizontal();
-                    break;
-                }
-
-                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.LabelField(mask.GetAddress(i).ToString(), EditorStyles.miniLabel);
             }
 
             if (mask.Count > shown)
             {
                 EditorGUILayout.LabelField(
-                    TrFormat("… and {0} more (the numeric address field and the mask modes edit the whole set)",
-                        mask.Count - shown),
+                    TrFormat("… and {0} more (re-apply the mask to change the whole set)", mask.Count - shown),
                     EditorStyles.miniLabel);
             }
         }
 
         // ---- Actions --------------------------------------------------------------------------------
-
-        private void AddRemovalAddresses(IEnumerable<RemovedTriangleAddress> addresses)
-        {
-            Undo.RecordObject(this, Tr("Add Removal Triangles"));
-
-            var duplicates = new List<RemovedTriangleAddress>();
-            var added = _draft.Removal.AddRange(addresses, duplicates);
-            MarkSelectionDirty();
-
-            SetStatus(duplicates.Count == 0
-                ? TrFormat("Added {0} removal address(es).", added)
-                : TrFormat(
-                    "Added {0} removal address(es); {1} duplicate(s) were already present and were kept unchanged.",
-                    added, duplicates.Count));
-        }
 
         /// <summary>
         /// Captures the target compatibility signature, scoped to the selected target armature.
@@ -1862,25 +2233,56 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         /// <summary>Reads a profile asset into the draft. The asset itself is never written.</summary>
         /// <remarks>
+        /// <para>
         /// A profile that carries no stored part id is reported here rather than only at build time: the draft
         /// receives the id the build already derives from the profile asset's GUID
         /// (<see cref="ApaPartIdentityResolver"/>), so saving the profile stores the identity the pipeline has
         /// been using instead of replacing it.
+        /// </para>
+        /// <para>
+        /// <b>Loading is a replacement, not a merge.</b> Everything the profile owns comes from the asset, and
+        /// every value derived from the previous draft, selection, or mesh is dropped in the same edit
+        /// (<see cref="InvalidateDerivedState"/>), so nothing the previous profile resolved — its candidates, its
+        /// merge-check classification, its cached mesh arrays, its status lines — can be served after this one is
+        /// loaded. The transition itself is <see cref="ApaProfileLoader"/>, shared with the installer inspector's
+        /// shortcut so the two entry points cannot diverge.
+        /// </para>
+        /// <para>
+        /// <b>The armature selections are restored, not cleared.</b> The profile carries the two armature
+        /// selections as paths, and the live object fields are re-resolved from them as soon as the draft holds
+        /// them, so loading a profile shows the selections it declares. A path that does not resolve leaves the
+        /// field empty — the previous profile's live reference is never retained — and the path stays in the draft
+        /// for the selection check to report.
+        /// </para>
         /// </remarks>
         private void LoadProfile(ApaPartProfile asset)
         {
             if (asset == null) return;
 
-            var needsRepair = ApaPartIdentityResolver.NeedsRepair(asset);
-
             Undo.RecordObject(this, Tr("Load Avatar Part Profile"));
-            _draft = ApaProfileDraft.FromProfile(asset);
-            _draft.EnsureStablePartId();
-            _profilePath = AssetDatabase.GetAssetPath(asset);
-            _prefabPath = ApaAuthoringAssetPaths.DefaultPrefabPath(
-                _selection.OutputFolder, _selection.PartRoot != null ? _selection.PartRoot.name : "AvatarPart");
+            ApplyLoadedProfile(asset, AssetDatabase.GetAssetPath(asset));
+            Repaint();
+            SceneView.RepaintAll();
+        }
 
-            ClearResults(needsRepair
+        /// <summary>
+        /// Applies a loaded profile to the window's state. The caller records undo and repaints.
+        /// </summary>
+        /// <remarks>
+        /// The order is the contract: the draft and the two paths come from the asset, then the derived state is
+        /// dropped, and only then is the status line written — so the line describes the state that is actually in
+        /// effect rather than being cleared by the reset that follows it.
+        /// </remarks>
+        private void ApplyLoadedProfile(ApaPartProfile asset, string profileAssetPath)
+        {
+            var loaded = ApaProfileLoader.Load(asset, _selection, profileAssetPath);
+
+            _draft = loaded.Draft;
+            _profilePath = loaded.ProfilePath;
+            _prefabPath = loaded.PrefabPath;
+
+            InvalidateDerivedState();
+            ClearResults(loaded.NeedsStablePartId
                 ? TrFormat(
                     "Loaded profile '{0}'. The asset is only read until you save. It carries no stored part id, " +
                     "so the draft holds the stable id derived from the profile asset's GUID; saving stores it.",

@@ -510,20 +510,20 @@ namespace AvatarPartAssembler.Tests
                 var constants = new Dictionary<string, string>(StringComparer.Ordinal);
                 foreach (Match declaration in constDeclaration.Matches(text))
                 {
-                    constants[declaration.Groups["name"].Value] = Unescape(declaration.Groups["value"].Value);
+                    constants[declaration.Groups["name"].Value] = UnescapeRun(declaration.Groups["value"].Value);
                 }
 
                 foreach (Match match in scan.Matches(text))
                 {
-                    Remember(used, name, Unescape(match.Groups["key"].Value));
+                    Remember(used, name, UnescapeRun(match.Groups["key"].Value));
                 }
 
                 foreach (Match match in contentScan.Matches(text))
                 {
-                    Remember(used, name, Unescape(match.Groups["key"].Value));
+                    Remember(used, name, UnescapeRun(match.Groups["key"].Value));
 
                     var tip = match.Groups["tip"];
-                    if (tip.Success) Remember(used, name, Unescape(tip.Value));
+                    if (tip.Success) Remember(used, name, UnescapeRun(tip.Value));
                 }
 
                 foreach (Match match in constScan.Matches(text))
@@ -612,7 +612,8 @@ namespace AvatarPartAssembler.Tests
                 ApaErrorCode.RemovalOverlapResolvedByPriority, ApaErrorCode.UndeclaredUvChannel,
                 ApaErrorCode.InvalidConflictPriority, ApaErrorCode.SubMeshWithoutMaterialSlot,
                 ApaErrorCode.InactiveInstallerSkipped, ApaErrorCode.PartOnlyShapeDisallowed,
-                ApaErrorCode.UvSemanticChannelAbsent, ApaErrorCode.MergeVertexGroupInvalid, ApaErrorCode.InternalError
+                ApaErrorCode.UvSemanticChannelAbsent, ApaErrorCode.MergeVertexGroupInvalid,
+                ApaErrorCode.SeamCandidateColorInvalid, ApaErrorCode.InternalError
             };
 
             var missing = new List<string>();
@@ -719,6 +720,31 @@ namespace AvatarPartAssembler.Tests
             }
 
             return File.ReadAllText(path);
+        }
+
+        /// <summary>
+        /// Evaluates a run of adjacent literals joined with <c>+</c> into the one string the compiler produces.
+        /// </summary>
+        /// <remarks>
+        /// A long key is wrapped across several literals, and the scan captures the whole run so that the
+        /// concatenation cannot hide a key from it. <see cref="Unescape"/> alone would then strip only the outer
+        /// quotes and leave the interior quotes and plus signs in the value, so every wrapped key would be
+        /// compared against the table under a spelling that no source ever produces and be reported missing. This
+        /// splits the run back into its literals and joins their values.
+        /// </remarks>
+        private static string UnescapeRun(string run)
+        {
+            if (string.IsNullOrEmpty(run)) return string.Empty;
+
+            var text = new StringBuilder(run.Length);
+            foreach (Match match in Regex.Matches(run, StringLiteral))
+            {
+                text.Append(Unescape(match.Value));
+            }
+
+            // A run that carries no complete literal (which the patterns above cannot produce) still gets the
+            // single-literal treatment rather than being dropped.
+            return text.Length == 0 ? Unescape(run) : text.ToString();
         }
 
         /// <summary>Evaluates one C# string literal, including its surrounding quotes.</summary>

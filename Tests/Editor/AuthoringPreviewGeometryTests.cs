@@ -301,15 +301,19 @@ namespace AvatarPartAssembler.Tests.Authoring
         // ---- Source contracts: which half reads which pose ---------------------------------------------
 
         /// <summary>
-        /// The Scene View tool draws the overlay and runs both picks through the evaluated-geometry cache, and
-        /// releases the baker when the window closes.
+        /// The Scene View tool draws the removal overlay and runs both picks through the evaluated-geometry
+        /// cache, draws the candidate and merge-check overlays from the rest-pose arrays seam generation reads,
+        /// and releases the baker when the window closes.
         /// </summary>
         /// <remarks>
-        /// A structural check, because the alternative is standing up a Scene View and a repaint: what matters is
-        /// that no path in the tool still reads the rest-pose array for positions the author sees.
+        /// A structural check, because the alternative is standing up a Scene View and a repaint. The two halves
+        /// are deliberately different since M14: the red removal overlay and its picks describe the geometry the
+        /// author sees, so they follow a blend-shape pose, while the green candidate overlay and the merge check
+        /// describe the <i>input</i> of seam generation, which is rest-pose data. What matters is that neither
+        /// half reads the wrong source.
         /// </remarks>
         [Test]
-        public void SceneTool_ReadsTheOverlayAndBothPicksThroughTheEvaluatedGeometryCache()
+        public void SceneTool_DrawsTheRemovalOverlayAndPicksFromEvaluatedGeometryAndTheCandidatesFromRestPose()
         {
             var source = ReadEditorSource("Authoring", "ApaAuthoringSceneTool.cs");
 
@@ -320,14 +324,20 @@ namespace AvatarPartAssembler.Tests.Authoring
 
             Assert.IsFalse(
                 Regex.IsMatch(source, @"_targetArrays\.TryRead\([^)]*out var vertices"),
-                "The rest-pose array cache must not supply positions to a draw or a pick any more.");
+                "The removal overlay must not take its positions from the rest-pose array cache.");
+
+            // The candidate overlay and the merge check read mesh.vertices, exactly as ApaSeamWorldMatcher does.
+            Assert.GreaterOrEqual(
+                Regex.Matches(source, @"arrays\.TryRead\(mesh, out var vertices, out _\)").Count,
+                2,
+                "The candidate overlay and the merge check must read the rest-pose vertex array.");
 
             StringAssert.Contains("_baker.Dispose()", source, "The transient bake mesh must be released.");
             StringAssert.Contains("public void InvalidateMeshCache()", source);
         }
 
         [Test]
-        public void AuthoringWindow_DisposesTheSceneToolAndWiresTheGroupIntoSeamGeneration()
+        public void AuthoringWindow_DisposesTheSceneToolAndWiresTheCandidatesIntoSeamGeneration()
         {
             var source = ReadEditorSource("Authoring", "ApaAuthoringWindow.cs");
 
@@ -336,9 +346,9 @@ namespace AvatarPartAssembler.Tests.Authoring
                 source,
                 "Closing the window must release the Scene View tool's transient mesh.");
 
-            StringAssert.Contains("ApaMergeVertexGroupResolver.Resolve(", source);
-            StringAssert.Contains("targetGroup.Indices", source);
-            StringAssert.Contains("partGroup.Indices", source);
+            StringAssert.Contains("ApaSeamVertexColorCandidates.Resolve(", source);
+            StringAssert.Contains("targetCandidates.Indices", source);
+            StringAssert.Contains("partCandidates.Indices", source);
             Assert.IsFalse(
                 Regex.IsMatch(
                     source,

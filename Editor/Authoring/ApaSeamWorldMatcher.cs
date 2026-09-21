@@ -159,8 +159,9 @@ namespace AvatarPartAssembler.Editor.Authoring
         public const float MaximumTolerance = 1e-3f;
 
         /// <summary>
-        /// Generates pairs from all vertices. Use the candidate overload when the authoring source has marked a
-        /// seam ring (for example with a dedicated vertex group) and only those vertices are allowed to pair.
+        /// Generates pairs from all vertices. The Part Authoring window uses the candidate overload after resolving
+        /// the selected <c>Mesh.colors32</c> value, while this all-vertices overload remains public for explicit
+        /// seam consumers and compatibility tests that already provide their own candidate policy.
         /// </summary>
         public static ApaSeamWorldMatchResult Match(
             Renderer targetRenderer,
