@@ -77,6 +77,19 @@ namespace AvatarPartAssembler.Editor.Preview
             _targetRenderer = targetRenderer;
             _installers = installers ?? Array.Empty<AvatarPartInstaller>();
             _partRenderers = ApaPreviewDiscovery.BuildPartRendererMap(_installers);
+            // The capture records the exact renderer whose mesh entered the assembled plan. Prefer that
+            // reference over re-discovering the first renderer under the part root: a prefab can contain helper
+            // renderers, and after APA becomes active the helper may be the one still visible while the captured
+            // renderer is the one whose material override the author actually changed.
+            if (_context != null && _context.Parts != null)
+            {
+                for (var i = 0; i < _context.Parts.Count; i++)
+                {
+                    var part = _context.Parts[i];
+                    if (part == null || part.SourceRenderer == null || string.IsNullOrEmpty(part.PartId)) continue;
+                    _partRenderers[part.PartId] = part.SourceRenderer;
+                }
+            }
             _materials = plan != null ? plan.MaterialLayout.ToMaterialArray() : Array.Empty<Material>();
             _valid = false;
         }
@@ -126,23 +139,73 @@ namespace AvatarPartAssembler.Editor.Preview
                 }
                 else
                 {
-                    // The live declarations describe a different slot structure, so this mesh's own list is the
-                    // only one that lines up with its submeshes. The fingerprint comparison in the node is what
-                    // turns that state into a rebuild.
-                    _materials = _plan.MaterialLayout.ToMaterialArray();
+                    // Keep the generated mesh's slot mapping, but still read the current renderer assets. During
+                    // an editor material swap NDMF can refresh the material inputs before it has rebuilt the
+                    // geometry fingerprint. Falling back to the captured array here leaves the old material on
+                    // the proxy until that rebuild, while Play Mode already reads the live renderer. Resolving
+                    // the assets through the existing plan mapping keeps the preview visually in sync without
+                    // changing the cached mesh or its submesh count.
+                    _materials = ResolveAssetsForPlanLayout();
                     ReproducedLayout = false;
                 }
             }
             catch (Exception)
             {
-                // A resolver failure must not escape into a per-frame callback: the captured list is still a
-                // coherent answer for the mesh that is being drawn, and the diagnostics path reports the cause
-                // when the assembly is rebuilt.
-                _materials = _plan.MaterialLayout.ToMaterialArray();
+                // A resolver failure must not escape into a per-frame callback. The plan mapping is still a
+                // coherent answer for the mesh, and its live renderer assets are preferable to stale captures.
+                _materials = ResolveAssetsForPlanLayout();
                 ReproducedLayout = false;
             }
 
             return _materials;
+        }
+
+        /// <summary>
+        /// Resolves material assets by the slot mapping that belongs to the cached mesh.
+        /// </summary>
+        /// <remarks>
+        /// The method is intentionally independent of the live semantic conflict result. A conflict can change
+        /// the newly inferred layout before the preview node has been replaced, but it must not make the old asset
+        /// remain visible on the proxy. Missing or empty live slots retain the profile/captured material as the
+        /// only available fallback.
+        /// </remarks>
+        private Material[] ResolveAssetsForPlanLayout()
+        {
+            var materials = _plan != null && _plan.MaterialLayout != null
+                ? _plan.MaterialLayout.ToMaterialArray()
+                : Array.Empty<Material>();
+            if (_plan == null || _plan.MaterialLayout == null) return materials;
+
+            for (var slotIndex = 0; slotIndex < _plan.MaterialLayout.SlotCount; slotIndex++)
+            {
+                var slot = _plan.MaterialLayout.Slots[slotIndex];
+                if (slot == null) continue;
+
+                foreach (var source in slot.SourceSubMeshes)
+                {
+                    var renderer = string.IsNullOrEmpty(source.Key)
+                        ? _targetRenderer
+                        : (_partRenderers.TryGetValue(source.Key, out var partRenderer) ? partRenderer : null);
+                    if (!TryReadLiveMaterial(renderer, source.Value, out var material)) continue;
+
+                    materials[slotIndex] = material;
+                    break;
+                }
+            }
+
+            return materials;
+        }
+
+        private static bool TryReadLiveMaterial(Renderer renderer, int sourceSubMesh, out Material material)
+        {
+            material = null;
+            if (renderer == null || sourceSubMesh < 0) return false;
+
+            var current = renderer.sharedMaterials;
+            if (current == null || sourceSubMesh >= current.Length) return false;
+
+            material = current[sourceSubMesh];
+            return material != null;
         }
 
         /// <summary>
@@ -309,3 +372,4 @@ namespace AvatarPartAssembler.Editor.Preview
         }
     }
 }
+
