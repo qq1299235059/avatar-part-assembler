@@ -6,7 +6,7 @@ Avatar Part Assembler（APA）是一个面向 VRChat 模块化 Avatar 部件的 
 
 > APA 不修改作者的原始网格，也不把部件永久写进 Avatar。预览和上传构建都在 NDMF 的临时对象上完成。
 
-当前版本：`0.5.0` · Unity `2022.3` · 界面支持 English / 简体中文
+当前版本：`0.5.1` · Unity `2022.3` · 界面支持 English / 简体中文
 
 ## 先看哪一份文档
 
@@ -120,3 +120,4 @@ APA 采用事务式装配：规划、验证、网格生成和清理任何一步�
 ## 许可证
 
 MIT，见 [`LICENSE.md`](LICENSE.md)。
+
