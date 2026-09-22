@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.1] — preview material override fix
+
+- 修复 APA 参与构建时预览仍显示部件预制件旧材质的问题。预览现在优先使用装配上下文中实际参与合并的部件渲染器，并实时读取材质覆盖。
+
 ## [0.5.0] — protected part meshes, live preview materials
 
 - **Optional protected part mesh mode.** `Create Part Prefab` gains a protection toggle, off by default. When it
@@ -1313,3 +1317,4 @@ NDMF build integration follow in later milestones.
 - Skinned and blend-shaped input is blocked with `APA014` rather than assembled. This is
   the intended M1 behaviour, not a defect.
 - `APA007`, `APA008`, and `APA011` are allocated for M2 and are not produced by M1.
+
