@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.2] — Marshmallow PB compatibility and authoring UI improvements
+
+- 增加 Marshmallow PB 的骨骼兼容处理，并补充相关验证。
+- 部件编辑器与 Avatar Part Installer 优化界面可读性。
+- 配置文件使用 APA 包版本号校验；版本一致时保持安静，缺失或不匹配时提示重新生成。
+
 ## [0.5.1] — preview material override fix
 
 - 修复 APA 参与构建时预览仍显示部件预制件旧材质的问题。预览现在优先使用装配上下文中实际参与合并的部件渲染器，并实时读取材质覆盖。
