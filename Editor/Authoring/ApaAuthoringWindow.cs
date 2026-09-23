@@ -185,6 +185,24 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <summary>Whether the removal address list is expanded. Collapsed by default.</summary>
         [SerializeField] private bool _showAllAddresses;
 
+        // ---- Collapsible section state -----------------------------------------------------------------
+        // Window UI state, never profile data: which sections an author has open is a property of this window,
+        // not of the part, and it must never reach ApaProfileDraft or the saved asset. The fields are
+        // [SerializeField] so the layout the author set survives a domain reload and a window reopen, and they
+        // default to the workflow's reading order: Selection and Signature are the first two decisions, so they
+        // are open; every later block is a detail an author opens when they get to it. Actions is deliberately
+        // not collapsible — the buttons that write the part are never hidden behind a foldout.
+        [SerializeField] private bool _showSelectionSection = true;
+        [SerializeField] private bool _showSignatureSection = true;
+        [SerializeField] private bool _showIdentitySection;
+        [SerializeField] private bool _showRemovalSection;
+        [SerializeField] private bool _showSeamSection;
+        [SerializeField] private bool _showUvSection;
+        [SerializeField] private bool _showMaterialSection;
+        [SerializeField] private bool _showPolicySection;
+        [SerializeField] private bool _showOutputSection;
+        [SerializeField] private bool _showDiagnosticsSection;
+
         // Texture-mask selection settings. These live on the window, not in the profile: the mask is an authoring
         // input whose only lasting product is the canonical RemovedTriangleAddress set it generates. Keeping them
         // serialized means a reload does not lose the mask the author is working on; keeping them out of the
@@ -553,7 +571,12 @@ namespace AvatarPartAssembler.Editor.Authoring
             // The section order is deliberate and is asserted by a source-contract test. Loading an existing
             // profile is the first decision an author makes, so its control sits directly under the toolbar;
             // Output sits between the bone/blend-shape policy it belongs to and the Actions that write it.
+            //
+            // The workflow summary is drawn between the toolbar and the load control: it is the one line that says
+            // where the author is in the flow without opening anything, and it must be readable before the first
+            // section rather than after the last one.
             DrawToolbar();
+            DrawWorkflowSummary();
             DrawProfileLoadSection();
             DrawSelectionSection();
             DrawSignatureSection();
@@ -699,6 +722,148 @@ namespace AvatarPartAssembler.Editor.Authoring
         }
 
         /// <summary>
+        /// The one-line workflow summary under the toolbar: where the selection, the signature, the seam, and the
+        /// output stand right now.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// It answers "where am I" without opening a section, which is what the collapsible layout makes worth
+        /// having: an author can see that the selection is complete and the signature is captured before deciding
+        /// which block to open next.
+        /// </para>
+        /// <para>
+        /// <b>It reads state, it does not compute it.</b> Every value comes from the draft, the selection, and the
+        /// two cached live checks the sections already refresh once per change — no mesh is captured, no asset is
+        /// loaded, and no validation runs here, so a repaint stays as cheap as it was.
+        /// </para>
+        /// </remarks>
+        private void DrawWorkflowSummary()
+        {
+            EditorGUILayout.LabelField(
+                TrFormat(
+                    "Workflow: selection {0}; signature {1}; seam {2}; output {3}",
+                    DescribeSelectionReadiness(),
+                    DescribeSignatureReadiness(),
+                    DescribeSeamReadiness(),
+                    DescribeOutputReadiness()),
+                EditorStyles.wordWrappedMiniLabel);
+        }
+
+        /// <summary>How much of the four-field selection is set, with the count of selection problems.</summary>
+        private string DescribeSelectionReadiness()
+        {
+            var set = 0;
+            if (_selection.AvatarRoot != null) set++;
+            if (_selection.TargetRenderer != null) set++;
+            if (_selection.PartRoot != null) set++;
+            if (_selection.PartRenderer != null) set++;
+
+            var text = TrFormat("{0}/4 selection fields set", set);
+            var issues = CurrentSelectionIssues();
+            return issues.Issues.Count == 0
+                ? text
+                : text + ", " + TrFormat("{0} problem(s)", issues.Issues.Count);
+        }
+
+        /// <summary>Whether a target signature is captured, and whether its safety data is complete.</summary>
+        private string DescribeSignatureReadiness()
+        {
+            var profile = _draft.Compatibility;
+            if (!profile.IsCaptured) return Tr("not captured");
+            return profile.HasCompleteSafetyData ? Tr("captured") : Tr("captured, safety data incomplete");
+        }
+
+        /// <summary>The seam's own summary line, which already says empty, legacy, or how many pairs.</summary>
+        private string DescribeSeamReadiness()
+        {
+            return _draft.Seam.Describe();
+        }
+
+        /// <summary>The file the profile would be written to, or that no path is set yet.</summary>
+        private string DescribeOutputReadiness()
+        {
+            var name = FileNameOf(_profilePath);
+            return string.IsNullOrEmpty(name) ? Tr("(not set)") : name;
+        }
+
+        /// <summary>The last segment of an asset path, or an empty string for an empty path.</summary>
+        private static string FileNameOf(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return string.Empty;
+
+            var slash = path.LastIndexOf('/');
+            return slash >= 0 && slash < path.Length - 1 ? path.Substring(slash + 1) : path;
+        }
+
+        /// <summary>
+        /// Draws a section's collapsible header and reports whether its body should be drawn.
+        /// </summary>
+        /// <remarks>
+        /// The title carries the summary while the section is collapsed, which is the point: the triangle count,
+        /// the pair count, or the output file is visible without opening the block, so a collapsed section is a
+        /// decision aid rather than a blind click. Nothing here reads a mesh or an asset — the callers pass values
+        /// they already hold or that their own cached checks produce.
+        /// </remarks>
+        private static bool DrawSectionFoldout(ref bool expanded, string title, string summary)
+        {
+            EditorGUILayout.Space();
+            expanded = EditorGUILayout.Foldout(expanded, SectionFoldoutLabel(title, summary), true);
+            return expanded;
+        }
+
+        /// <summary>Joins a section title and its summary into the one line a collapsed section shows.</summary>
+        private static string SectionFoldoutLabel(string title, string summary)
+        {
+            return string.IsNullOrEmpty(summary) ? title : title + " — " + summary;
+        }
+
+        /// <summary>The stable part id the collapsed identity block shows.</summary>
+        private string DescribeIdentitySummary()
+        {
+            return string.IsNullOrEmpty(_draft.Identity.PartId) ? Tr("(none)") : _draft.Identity.PartId;
+        }
+
+        /// <summary>Appends the count of a cached check's issues to a section summary, when there are any.</summary>
+        /// <remarks>
+        /// The count is what keeps a collapsed section honest: a block that hides a blocking problem behind a
+        /// foldout would be a way to lose it, so the problem is part of the line the author reads while it is
+        /// closed. The checks are the sections' own cached ones, so nothing is recomputed for this.
+        /// </remarks>
+        private static string WithProblemCount(string summary, ValidationResult issues)
+        {
+            if (issues == null || issues.Issues.Count == 0) return summary;
+            return summary + ", " + TrFormat("{0} problem(s)", issues.Issues.Count);
+        }
+
+        /// <summary>The row count of a semantic table, with the count of that phase's draft-data problems.</summary>
+        private string DescribeSemanticSummary(int rows, ApaIssuePhase phase)
+        {
+            var text = TrFormat("{0} row(s)", rows);
+            var issues = DraftDataIssues();
+            if (issues == null) return text;
+
+            var count = 0;
+            for (var i = 0; i < issues.Count; i++)
+            {
+                if (issues[i].Phase == phase) count++;
+            }
+
+            return count == 0 ? text : text + ", " + TrFormat("{0} problem(s)", count);
+        }
+
+        /// <summary>Whether the generated merge configuration is on, which is the policy block's one decision.</summary>
+        private string DescribePolicySummary()
+        {
+            return _draft.Bones.MergeArmature ? Tr("merge armature on") : Tr("merge armature off");
+        }
+
+        /// <summary>The last validation's own summary, or that nothing has been validated yet.</summary>
+        private string DescribeDiagnosticsSummary()
+        {
+            return _validation == null ? Tr("Not validated yet.") : ApaDiagnosticText.Summarize(_validation);
+        }
+
+        /// <summary>
         /// The <c>Load Existing Profile</c> control, drawn directly under the toolbar.
         /// </summary>
         /// <remarks>
@@ -732,8 +897,10 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void DrawSelectionSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Selection"), EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(ref _showSelectionSection, Tr("Selection"), DescribeSelectionReadiness()))
+            {
+                return;
+            }
 
             EditorGUI.BeginChangeCheck();
 
@@ -876,10 +1043,13 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void DrawSignatureSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(
-                TrFormat("Target Signature (schema v{0})", ApaPartProfile.CurrentSchemaVersion),
-                EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(
+                    ref _showSignatureSection,
+                    TrFormat("Target Signature (schema v{0})", ApaPartProfile.CurrentSchemaVersion),
+                    DescribeSignatureReadiness()))
+            {
+                return;
+            }
 
             var profile = _draft.Compatibility;
 
@@ -953,8 +1123,10 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void DrawIdentitySection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Part Identity"), EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(ref _showIdentitySection, Tr("Part Identity"), DescribeIdentitySummary()))
+            {
+                return;
+            }
 
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(Tr("Stable Part Id"),
@@ -991,8 +1163,10 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private void DrawOutputSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Output"), EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(ref _showOutputSection, Tr("Output"), DescribeOutputReadiness()))
+            {
+                return;
+            }
 
             EditorGUILayout.BeginHorizontal();
             var profilePath = EditorGUILayout.TextField(Tr("Profile Asset"), _profilePath);
@@ -1147,10 +1321,16 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private void DrawRemovalSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Removal Region"), EditorStyles.boldLabel);
-
             var mask = _draft.Removal;
+
+            if (!DrawSectionFoldout(
+                    ref _showRemovalSection,
+                    Tr("Removal Region"),
+                    WithProblemCount(mask.Describe(), ValidateRemoval())))
+            {
+                return;
+            }
+
             EditorGUILayout.LabelField(Tr("Selected"), mask.Describe());
 
             EditorGUILayout.BeginHorizontal();
@@ -1465,10 +1645,15 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private void DrawSeamSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Seam (paired loops)"), EditorStyles.boldLabel);
-
             var seam = _draft.Seam;
+
+            if (!DrawSectionFoldout(
+                    ref _showSeamSection,
+                    Tr("Seam (paired loops)"),
+                    WithProblemCount(seam.Describe(), ValidateSeam())))
+            {
+                return;
+            }
 
             // A summary, not one row per vertex: a real seam has hundreds of pairs, and drawing them buries the
             // controls that matter. The counts and the tolerance are the reviewable facts.
@@ -1811,8 +1996,13 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void DrawUvSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("UV Semantics"), EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(
+                    ref _showUvSection,
+                    Tr("UV Semantics"),
+                    DescribeSemanticSummary(_draft.UvSemantics.Length, ApaIssuePhase.Uv)))
+            {
+                return;
+            }
 
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(Tr("Infer From Part Mesh"), GUILayout.Width(170)))
@@ -1911,8 +2101,13 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void DrawMaterialSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Material Semantics"), EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(
+                    ref _showMaterialSection,
+                    Tr("Material Semantics"),
+                    DescribeSemanticSummary(_draft.MaterialSemantics.Length, ApaIssuePhase.Materials)))
+            {
+                return;
+            }
 
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(Tr("Infer From Materials"), GUILayout.Width(170)))
@@ -2030,8 +2225,13 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private void DrawPolicySection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Bones And Blend Shapes"), EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(
+                    ref _showPolicySection,
+                    Tr("Bones And Blend Shapes"),
+                    DescribePolicySummary()))
+            {
+                return;
+            }
 
             EditorGUI.BeginChangeCheck();
 
@@ -2124,8 +2324,13 @@ namespace AvatarPartAssembler.Editor.Authoring
 
         private void DrawDiagnosticsSection()
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Diagnostics"), EditorStyles.boldLabel);
+            if (!DrawSectionFoldout(
+                    ref _showDiagnosticsSection,
+                    Tr("Diagnostics"),
+                    DescribeDiagnosticsSummary()))
+            {
+                return;
+            }
 
             if (_validation == null)
             {
@@ -2475,6 +2680,11 @@ namespace AvatarPartAssembler.Editor.Authoring
             if (!EnsureSignatureCaptured(Tr("Saving the profile"))) return;
             if (!PassesPreWriteValidation(Tr("Saving the profile"))) return;
 
+            // The writer stamps the installed package version onto the asset and brings this draft's own record of
+            // it in line with what was written, so a draft loaded from an older profile still matches the asset
+            // afterwards. That is what keeps the prefab step — which refuses a draft that differs from the saved
+            // profile — from blocking a profile the author just saved. A refused or cancelled write leaves the
+            // draft untouched, and the prefab step then reports the difference it really has.
             var result = ApaProfileWriter.Save(_draft, _profilePath, _allowOverwrite);
 
             if (result.RequiresOverwriteConfirmation)

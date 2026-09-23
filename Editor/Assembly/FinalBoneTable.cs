@@ -323,7 +323,8 @@ namespace AvatarPartAssembler.Editor
                 rendererLocalToWorld,
                 baseSourceToTarget,
                 context.NumericPolicy,
-                issues);
+                issues,
+                marshmallowPbCompatibilityEnabled: false);
 
             // A part may weight a bone the target body's signature declares but no body vertex uses. The body is
             // still the authority for that path, so its entry is created here — before any part is processed —
@@ -337,7 +338,8 @@ namespace AvatarPartAssembler.Editor
                 rendererLocalToWorld,
                 baseSourceToTarget,
                 context.NumericPolicy,
-                issues);
+                issues,
+                marshmallowPbCompatibilityEnabled: context.MarshmallowPbCompatibilityEnabled);
 
             var baseRemap = new int[baseMesh.BoneSignature.Count];
             for (var i = 0; i < baseRemap.Length; i++) baseRemap[i] = -1;
@@ -377,7 +379,8 @@ namespace AvatarPartAssembler.Editor
                     part.Transforms.SourceToTargetLocal(),
                     context.NumericPolicy,
                     issues,
-                    redirected);
+                    redirected,
+                    context.MarshmallowPbCompatibilityEnabled);
 
                 failed |= partFailed;
 
@@ -386,7 +389,12 @@ namespace AvatarPartAssembler.Editor
                 for (var i = 0; i < remap.Length; i++)
                 {
                     var path = part.Mesh.BoneSignature.PathAt(i);
-                    if (indexByPath.TryGetValue(path, out var index)) remap[i] = index;
+                    if (TryFindCompatibleBoneIndex(
+                            bones,
+                            indexByPath,
+                            path,
+                            context.MarshmallowPbCompatibilityEnabled,
+                            out var index)) remap[i] = index;
                 }
 
                 partRemaps[part.PartId] = remap;
@@ -502,7 +510,8 @@ namespace AvatarPartAssembler.Editor
             Matrix4x4 sourceToTargetLocal,
             ApaNumericPolicy policy,
             List<ValidationIssue> issues,
-            List<BoneRedirect> redirectedToTarget = null)
+            List<BoneRedirect> redirectedToTarget = null,
+            bool marshmallowPbCompatibilityEnabled = false)
         {
             if (mesh == null || mesh.BoneSignature.Count == 0) return true;
 
@@ -598,7 +607,15 @@ namespace AvatarPartAssembler.Editor
                     continue;
                 }
 
-                if (indexByPath.TryGetValue(path, out var existing))
+                var hasExisting = isPart
+                    ? TryFindCompatibleBoneIndex(
+                        bones,
+                        indexByPath,
+                        path,
+                        marshmallowPbCompatibilityEnabled,
+                        out var existing)
+                    : indexByPath.TryGetValue(path, out existing);
+                if (hasExisting)
                 {
                     // Merged: the part reuses a bone the body already has (section 19). The existing entry is
                     // authoritative and is deliberately NOT rewritten — its index, owner, and bind pose are the
@@ -674,7 +691,8 @@ namespace AvatarPartAssembler.Editor
             Matrix4x4 rendererLocalToWorld,
             Matrix4x4 sourceToTargetLocal,
             ApaNumericPolicy policy,
-            List<ValidationIssue> issues)
+            List<ValidationIssue> issues,
+            bool marshmallowPbCompatibilityEnabled = false)
         {
             if (baseMesh == null || baseMesh.BoneSignature.Count == 0) return true;
 
@@ -693,7 +711,7 @@ namespace AvatarPartAssembler.Editor
                 // An unreferenced slot, or a null bone entry, is not this rule's business: it needs no identity,
                 // contributes nothing, and is reported by nothing.
                 if (!ApaAvatarPath.HasIdentity(path)) continue;
-                if (!requested.Contains(path)) continue;
+                if (!ContainsCompatiblePath(requested, path, marshmallowPbCompatibilityEnabled)) continue;
 
                 if (seenInBody.TryGetValue(path, out var earlier))
                 {
@@ -766,6 +784,51 @@ namespace AvatarPartAssembler.Editor
             }
 
             return ok;
+        }
+
+        /// <summary>
+        /// Finds an exact bone identity first, then the narrow same-named-wrapper alias accepted by the
+        /// compatibility rule. The list order is the target body's deterministic authority order.
+        /// </summary>
+        private static bool TryFindCompatibleBoneIndex(
+            List<FinalBone> bones,
+            Dictionary<string, int> indexByPath,
+            string path,
+            bool marshmallowPbCompatibilityEnabled,
+            out int index)
+        {
+            if (indexByPath.TryGetValue(path, out index)) return true;
+            if (!marshmallowPbCompatibilityEnabled || !ApaAvatarPath.HasIdentity(path))
+            {
+                index = -1;
+                return false;
+            }
+
+            for (var i = 0; i < bones.Count; i++)
+            {
+                if (!ApaBonePathCompatibility.MatchesLiveTarget(path, bones[i].Path)) continue;
+                index = i;
+                return true;
+            }
+
+            index = -1;
+            return false;
+        }
+
+        private static bool ContainsCompatiblePath(
+            HashSet<string> requested,
+            string path,
+            bool marshmallowPbCompatibilityEnabled)
+        {
+            if (requested.Contains(path)) return true;
+            if (!marshmallowPbCompatibilityEnabled) return false;
+
+            foreach (var candidate in requested)
+            {
+                if (ApaBonePathCompatibility.MatchesLiveTarget(candidate, path)) return true;
+            }
+
+            return false;
         }
 
         /// <summary>

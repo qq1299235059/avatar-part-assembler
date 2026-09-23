@@ -39,6 +39,19 @@ namespace AvatarPartAssembler.Editor.Authoring
         [SerializeField] private ApaPartIdentity _identity = new ApaPartIdentity();
         [SerializeField] private ApaAvatarCompatibilityProfile _compatibility = new ApaAvatarCompatibilityProfile();
         [SerializeField] private string _partMeshFingerprint = string.Empty;
+
+        /// <summary>
+        /// The package version the loaded profile recorded, or empty for a draft that starts from nothing.
+        /// </summary>
+        /// <remarks>
+        /// Carried rather than recomputed, because the writer compares a draft against an asset to answer "are
+        /// there unsaved changes". A draft that materialized a version the asset does not have would report a
+        /// difference for a profile nobody edited, and the prefab step — which refuses to build from a stale
+        /// profile — would refuse a profile that was just saved. The value is the profile's provenance, so it
+        /// travels with the profile's content.
+        /// </remarks>
+        [SerializeField] private string _apaPackageVersion = string.Empty;
+
         [SerializeField] private ApaRemovalMask _removal = new ApaRemovalMask();
         [SerializeField] private ApaSeamSelection _seam = new ApaSeamSelection();
         [SerializeField] private ApaUvChannelSemantic[] _uvSemantics = Array.Empty<ApaUvChannelSemantic>();
@@ -65,6 +78,22 @@ namespace AvatarPartAssembler.Editor.Authoring
         {
             get => _partMeshFingerprint ?? string.Empty;
             set => _partMeshFingerprint = value ?? string.Empty;
+        }
+
+        /// <summary>
+        /// The package version the profile this draft was loaded from records, or empty for a new draft.
+        /// </summary>
+        /// <remarks>
+        /// Read-only to the UI: the writer stamps the installed version at the one place a profile is written, so
+        /// there is no authoring control that could set a version by hand. The writer also brings this value in
+        /// line with the asset on a successful write (<see cref="ApaProfileWriter.AdoptWrittenPackageVersion"/>),
+        /// which is what keeps a draft loaded from an older profile equal to the profile that was just saved from
+        /// it instead of looking like an unsaved change.
+        /// </remarks>
+        public string ApaPackageVersion
+        {
+            get => _apaPackageVersion ?? string.Empty;
+            set => _apaPackageVersion = value ?? string.Empty;
         }
 
         /// <summary>The editable removal triangle set.</summary>
@@ -179,6 +208,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 
             Compatibility = CopyCompatibility(profile.CompatibilityOrNull);
             PartMeshFingerprint = profile.PartMeshFingerprint;
+            ApaPackageVersion = profile.ApaPackageVersion;
             Removal = ApaRemovalMask.FromRemovalProfile(profile.RemovalOrNull);
             Seam = ApaSeamSelection.FromSeamProfile(profile.SeamOrNull);
             UvSemantics = CopyUv(profile.UvSemantics);
@@ -212,6 +242,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             _identity = new ApaPartIdentity();
             _compatibility = new ApaAvatarCompatibilityProfile();
             _partMeshFingerprint = string.Empty;
+            _apaPackageVersion = string.Empty;
             _removal = new ApaRemovalMask();
             _seam = new ApaSeamSelection();
             _uvSemantics = Array.Empty<ApaUvChannelSemantic>();
@@ -266,6 +297,10 @@ namespace AvatarPartAssembler.Editor.Authoring
             };
             profile.Compatibility = CopyCompatibility(Compatibility);
             profile.PartMeshFingerprint = PartMeshFingerprint;
+
+            // The draft's own record is carried through. The writer stamps the installed version over it when it
+            // writes, which is what keeps "the draft equals the asset it came from" true between writes.
+            profile.ApaPackageVersion = this.ApaPackageVersion;
             profile.Removal = Removal.ToRemovalProfile();
             profile.Seam = Seam.ToSeamProfile();
             profile.UvSemantics = CopyUv(UvSemantics);

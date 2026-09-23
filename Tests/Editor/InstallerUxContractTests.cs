@@ -205,6 +205,82 @@ namespace AvatarPartAssembler.Tests
             StringAssert.Contains("RunValidation(installer, true);", source);
         }
 
+        // ---- The one-click profile rebuild -------------------------------------------------------------
+
+        /// <summary>
+        /// The rebuild proves the write before it asks for confirmation, and verifies the asset identity after it.
+        /// </summary>
+        /// <remarks>
+        /// Both are ordering properties of one method, which is exactly what a source contract can pin and a unit
+        /// test cannot: the confirmation must be the last step before the write (so the author is never asked to
+        /// confirm a rebuild that is about to be refused), and the GUID must be compared around the write (so the
+        /// "the profile keeps its identity" promise is checked rather than assumed).
+        /// </remarks>
+        [Test]
+        public void InstallerInspector_RebuildConfirmsAfterTheDryRunAndVerifiesTheAssetGuid()
+        {
+            var body = RebuildBody();
+
+            var dryRun = body.IndexOf("ApaAuthoringValidation.DryRun(selection, draft)", StringComparison.Ordinal);
+            var confirm = body.IndexOf("EditorUtility.DisplayDialog(", StringComparison.Ordinal);
+            var write = body.IndexOf("ApaProfileWriter.Save(draft, profilePath, true)", StringComparison.Ordinal);
+
+            Assert.GreaterOrEqual(dryRun, 0, "The rebuild must plan the draft before writing it.");
+            Assert.GreaterOrEqual(confirm, 0, "The rebuild must confirm the overwrite.");
+            Assert.GreaterOrEqual(write, 0, "The rebuild must write through the guarded writer.");
+
+            Assert.Less(dryRun, confirm, "The dry run must decide before the author is asked to confirm.");
+            Assert.Less(confirm, write, "The confirmation must be the last step before the write.");
+
+            var guidBefore = body.IndexOf("var guidBefore", StringComparison.Ordinal);
+            var guidAfter = body.IndexOf("var guidAfter", StringComparison.Ordinal);
+            Assert.GreaterOrEqual(guidBefore, 0, "The rebuild must read the profile's GUID before the write.");
+            Assert.GreaterOrEqual(guidAfter, 0, "The rebuild must read the profile's GUID back after the write.");
+            Assert.Less(guidBefore, write, "The GUID must be read before the write.");
+            Assert.Greater(guidAfter, write, "The GUID must be read back after the write.");
+        }
+
+        /// <summary>
+        /// The rebuild refuses a profile whose removal storage is corrupt instead of writing an empty removal set
+        /// over the author's selection.
+        /// </summary>
+        /// <remarks>
+        /// The corrupt pair reads as "no triangles removed", and the draft normalizes it into a well-formed empty
+        /// mask, so the dry run cannot catch it: the refusal has to happen before the draft is built, with the
+        /// reason token the build uses for the same condition.
+        /// </remarks>
+        [Test]
+        public void InstallerInspector_RebuildRefusesCorruptRemovalStorageBeforeBuildingTheDraft()
+        {
+            var body = RebuildBody();
+
+            var guard = body.IndexOf("HasCorruptStorage", StringComparison.Ordinal);
+            var draft = body.IndexOf("ApaProfileDraft.FromProfile(profile)", StringComparison.Ordinal);
+
+            Assert.GreaterOrEqual(guard, 0, "The rebuild must check the removal storage it is about to replace.");
+            Assert.GreaterOrEqual(draft, 0, "The rebuild must build its draft from the profile.");
+            Assert.Less(
+                guard,
+                draft,
+                "The corrupt-storage refusal must run before the draft normalizes the storage away.");
+
+            StringAssert.Contains("reason=corrupt-removal-storage", body);
+        }
+
+        /// <summary>The body of the installer Inspector's one-click rebuild, for the ordering contracts above.</summary>
+        private static string RebuildBody()
+        {
+            var source = InspectorSource;
+
+            var start = source.IndexOf("private void RebuildProfileConfiguration(", StringComparison.Ordinal);
+            Assert.GreaterOrEqual(start, 0, "RebuildProfileConfiguration was not found.");
+
+            var end = source.IndexOf("private void CreateProfileAsset(", start, StringComparison.Ordinal);
+            Assert.Greater(end, start, "The method after RebuildProfileConfiguration was not found.");
+
+            return source.Substring(start, end - start);
+        }
+
         // ---- Follow-session synchronization ------------------------------------------------------------
 
         [Test]

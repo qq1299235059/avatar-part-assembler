@@ -179,7 +179,12 @@ namespace AvatarPartAssembler.Editor
             // it (it names the bone and the null entry), so the compatibility rule defers it rather than
             // restating it as a signature mismatch. Every other difference still blocks here when a source is
             // skinned.
-            CompareBones(expected, actual, hasSkinning ? mismatches : advisories, hasSkinning);
+            CompareBones(
+                expected,
+                actual,
+                hasSkinning ? mismatches : advisories,
+                hasSkinning,
+                context.MarshmallowPbCompatibilityEnabled);
 
             if (mismatches.Count == 0)
             {
@@ -458,7 +463,8 @@ namespace AvatarPartAssembler.Editor
             ApaAvatarCompatibilityProfile expected,
             MeshSnapshot actual,
             List<string> destination,
-            bool deferMissingLiveIdentities)
+            bool deferMissingLiveIdentities,
+            bool marshmallowPbCompatibilityEnabled)
         {
             // A profile captured before bone signatures existed is not "different"; it is simply unknown, and
             // reporting an unknown as a difference would send the author looking for a bone problem that may
@@ -488,6 +494,16 @@ namespace AvatarPartAssembler.Editor
                 {
                     continue;
                 }
+
+                // Marshmallow PB can insert one or more same-named wrapper transforms around an existing
+                // PhysBone target (for example Chest/Breast_L -> Chest/Breast_L/Breast_L). This is a narrowly
+                // compatible hierarchy change: the recorded bone remains present at the expected path, while
+                // the extra same-named nodes are appended after it. Keep the live signature intact; later bone
+                // resolution must still use the actual transform path captured from the renderer. The exception
+                // is enabled only when the live avatar actually contains Marshmallow PB.
+                if (marshmallowPbCompatibilityEnabled
+                    && ApaBonePathCompatibility.MatchesLiveTarget(expectedPaths[i], actualPaths[i]))
+                    continue;
 
                 // Deferred to the bone table: see the call site. Only a *live* missing identity is deferred; a
                 // recorded path that is empty while the live one has a value is a real staleness mismatch.

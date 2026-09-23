@@ -77,6 +77,80 @@ namespace AvatarPartAssembler.Tests
         }
 
         /// <summary>
+        /// A repeated final path segment is accepted for the same-named wrapper transforms inserted by
+        /// marshmallow_PB, while retaining the live path on the snapshot for later bone resolution.
+        /// </summary>
+        [Test]
+        public void SkinnedBoneSignature_AllowsRepeatedFinalSegmentWrapper()
+        {
+            const string expectedPath = "Armature/Spine";
+            const string livePath = "Armature/Spine/Spine/Spine";
+            var body = SkinnedBody(new[] { "Armature/Hips", livePath });
+            var part = SkinnedPart();
+            var signature = MeshFixtures.SignatureFor(body);
+            signature.BonePaths = new[] { "Armature/Hips", expectedPath };
+
+            var result = ApaCore.Plan(MeshFixtures.Context(
+                body,
+                new[] { MeshFixtures.PartSnapshot("part-a", part, MeshFixtures.Seam(4)) },
+                signature: signature,
+                marshmallowPbCompatibilityEnabled: true));
+
+            Assert.IsFalse(
+                result.Issues.ContainsCode(ApaErrorCode.PartProfileIncompatible),
+                "Only repeated copies of the recorded final segment should be tolerated. " +
+                result.Issues.FormatAll());
+            Assert.AreEqual(livePath, body.BoneSignature.PathAt(1),
+                "Compatibility must not rewrite the captured live hierarchy path.");
+        }
+
+        /// <summary>
+        /// The same path shape remains a mismatch when the caller did not detect Marshmallow PB. This keeps a
+        /// hand-authored duplicate hierarchy from receiving the vendor-specific exception by accident.
+        /// </summary>
+        [Test]
+        public void RepeatedFinalSegmentWrapper_RequiresMarshmallowPbDetection()
+        {
+            const string expectedPath = "Armature/Spine";
+            const string livePath = "Armature/Spine/Spine";
+            var body = SkinnedBody(new[] { "Armature/Hips", livePath });
+            var part = SkinnedPart();
+            var signature = MeshFixtures.SignatureFor(body);
+            signature.BonePaths = new[] { "Armature/Hips", expectedPath };
+
+            var result = ApaCore.Plan(MeshFixtures.Context(
+                body,
+                new[] { MeshFixtures.PartSnapshot("part-a", part, MeshFixtures.Seam(4)) },
+                signature: signature));
+
+            Assert.IsFalse(result.Succeeded, "The wrapper exception is only valid after Marshmallow PB detection.");
+            Assert.IsTrue(
+                result.Issues.ContainsCode(ApaErrorCode.PartProfileIncompatible),
+                result.Issues.FormatAll());
+        }
+
+        /// <summary>A real added hierarchy segment still blocks even when the last segment happens to match.</summary>
+        [Test]
+        public void SkinnedBoneSignature_StillBlocksDifferentHierarchyChange()
+        {
+            var body = SkinnedBody(new[] { "Armature/Hips", "Armature/Spine/Other" });
+            var part = SkinnedPart();
+            var signature = MeshFixtures.SignatureFor(body);
+            signature.BonePaths = new[] { "Armature/Hips", "Armature/Spine" };
+
+            var result = ApaCore.Plan(MeshFixtures.Context(
+                body,
+                new[] { MeshFixtures.PartSnapshot("part-a", part, MeshFixtures.Seam(4)) },
+                signature: signature));
+
+            Assert.IsFalse(result.Succeeded, "A different added bone path must remain blocking.");
+            var issue = result.Issues.FindByCode(ApaErrorCode.PartProfileIncompatible);
+            Assert.IsNotNull(issue, result.Issues.FormatAll());
+            Assert.AreEqual(ApaSeverity.Error, issue.Severity);
+            StringAssert.Contains("reason=bone-signature-mismatch", issue.Detail);
+        }
+
+        /// <summary>
         /// The identical mismatch stays a warning when nothing in the configuration is skinned: there are no
         /// weights to remap and no bone table to build, so the stored paths are a staleness signal only.
         /// </summary>
@@ -237,7 +311,7 @@ namespace AvatarPartAssembler.Tests
         // ---- fixtures ---------------------------------------------------------------------------------
 
         /// <summary>A skinned four-vertex ring plus apex, the same shape the skinning suite uses.</summary>
-        private static MeshSnapshot SkinnedBody()
+        private static MeshSnapshot SkinnedBody(string[] bonePaths = null)
         {
             var positions = new List<Vector3>(MeshFixtures.Ring(4, 1f)) { new Vector3(0f, 0f, 1f) };
             var weights = MeshFixtures.UniformWeights(positions.Count, 0);
@@ -247,7 +321,7 @@ namespace AvatarPartAssembler.Tests
                 "Body",
                 positions.ToArray(),
                 MeshFixtures.CapTriangles(4, 0, 4),
-                BodyBones,
+                bonePaths ?? BodyBones,
                 weights,
                 MeshFixtures.BonesAt(HipsPosition, SpinePosition));
         }

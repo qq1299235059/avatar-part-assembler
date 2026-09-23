@@ -622,6 +622,17 @@ namespace AvatarPartAssembler.Editor
                 var path = partPaths[boneIndex] ?? string.Empty;
                 if (targetPaths.Contains(path)) return;
 
+                // CompatibilityRule accepts a same-named wrapper appended by Marshmallow PB. Seam safety must
+                // use that same narrow, directional policy, otherwise a valid alias is reported as a part-only
+                // seam bone even though the final bone table redirects it to the target transform.
+                if (context.MarshmallowPbCompatibilityEnabled)
+                {
+                    foreach (var targetPath in targetPaths)
+                    {
+                        if (ApaBonePathCompatibility.MatchesLiveTarget(path, targetPath)) return;
+                    }
+                }
+
                 var key = match.PartVertex + "|" + path;
                 if (!reported.Add(key)) return;
 

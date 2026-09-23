@@ -102,6 +102,50 @@ namespace AvatarPartAssembler.Tests
         }
 
         /// <summary>
+        /// A live target wrapper whose final segment repeats the authored path is still the target bone for seam
+        /// skinning. The seam guard and the final remap must make the same compatibility decision.
+        /// </summary>
+        [Test]
+        public void RepeatedFinalBoneWrapper_RedirectsPartSeamWeightsToTarget()
+        {
+            var positions = new List<Vector3>(MeshFixtures.Ring(4, 1f))
+            {
+                new Vector3(0f, 0f, 1f)
+            };
+            var targetWeights = MeshFixtures.UniformWeights(positions.Count, 0);
+            targetWeights[4] = new BoneWeight { boneIndex0 = 1, weight0 = 1f };
+            var target = MeshFixtures.SkinnedSnapshot(
+                "Body",
+                positions.ToArray(),
+                MeshFixtures.CapTriangles(4, 0, 4),
+                new[] { "Armature/Hips", "Armature/Spine/Spine" },
+                targetWeights,
+                MeshFixtures.BonesAt(HipsPosition, SpinePosition));
+
+            var partWeights = MeshFixtures.UniformWeights(positions.Count, 1);
+            var part = MeshFixtures.SkinnedSnapshot(
+                "Part",
+                positions.ToArray(),
+                MeshFixtures.CapTriangles(4, 0, 4),
+                new[] { "Armature/Hips", "Armature/Spine" },
+                partWeights,
+                MeshFixtures.BonesAt(HipsPosition, SpinePosition));
+
+            var planning = ApaCore.Plan(MeshFixtures.Context(target, new[]
+            {
+                MeshFixtures.PartSnapshot("part-a", part, MeshFixtures.Seam(4))
+            }, marshmallowPbCompatibilityEnabled: true));
+
+            Assert.IsTrue(planning.Succeeded, planning.Issues.FormatAll());
+            Assert.IsFalse(
+                planning.Issues.ContainsCode(ApaErrorCode.SeamWeightBoneNotInTarget),
+                "A repeated final wrapper is the same narrow compatibility alias as the signature check." +
+                planning.Issues.FormatAll());
+            Assert.AreEqual(2, planning.Plan.BoneTable.Count, "The alias must not append a duplicate part bone.");
+            Assert.AreEqual(1, planning.Plan.BoneTable.RemapBone("part-a", 1));
+        }
+
+        /// <summary>
         /// Bone order follows stable part identity, not the order the caller happened to supply parts in.
         /// </summary>
         [Test]

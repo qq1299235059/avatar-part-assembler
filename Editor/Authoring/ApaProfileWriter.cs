@@ -56,6 +56,25 @@ namespace AvatarPartAssembler.Editor.Authoring
         public bool Succeeded => Status == ApaProfileWriteStatus.Created || Status == ApaProfileWriteStatus.Updated;
 
         /// <summary>
+        /// The Avatar Part Assembler package version the written asset records, or an empty string when nothing
+        /// was written.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Read back from the object that was written rather than recomputed, because "what the asset records" is
+        /// the fact the draft has to agree with. <see cref="Asset"/> alone cannot answer it: a refused overwrite
+        /// reports the profile that was <i>found</i>, not one this write produced, so a caller that read the stamp
+        /// off <see cref="Asset"/> would treat an untouched asset as if it had just been stamped.
+        /// </para>
+        /// <para>
+        /// <see cref="ApaProfileWriter.Save"/> brings the draft in line with this value on every successful write,
+        /// so a caller normally has nothing to do; the value is exposed for a caller that reports what a write
+        /// recorded, and for tests.
+        /// </para>
+        /// </remarks>
+        public string WrittenApaPackageVersion => Succeeded && Asset != null ? Asset.ApaPackageVersion : string.Empty;
+
+        /// <summary>
         /// True when the write stopped because the file exists. The caller must ask the author explicitly before
         /// retrying with overwrite enabled.
         /// </summary>
@@ -109,6 +128,14 @@ namespace AvatarPartAssembler.Editor.Authoring
     /// <item><description>
     /// No scene reference is written: the compatibility signature stores paths and topology, and a material
     /// reference that is not a project asset is refused rather than serialized.
+    /// </description></item>
+    /// <item><description>
+    /// A successful write leaves the draft describing the asset it produced. The profile records the package
+    /// version that wrote it, so the writer stamps the installed version onto the asset and then brings the
+    /// draft's own record in line with it (<see cref="AdoptWrittenPackageVersion"/>). Without that step the
+    /// draft would keep the stamp of the older release it was loaded from, and the next "the draft differs from
+    /// the asset" check would refuse a profile the author had just saved. A refused, cancelled, or failed write
+    /// changes neither the asset nor the draft.
     /// </description></item>
     /// </list>
     /// </remarks>
@@ -230,6 +257,14 @@ namespace AvatarPartAssembler.Editor.Authoring
                 workingCopy = draft.Materialize();
                 workingCopy.hideFlags = HideFlags.HideAndDontSave;
 
+                // The profile records the package version that wrote it, so the installer can compare it with the
+                // installed one and stay quiet while the two agree. The stamp is written here, at the one place a
+                // profile reaches disk, and only when the installed version can actually be read: recording an
+                // unknown version as an empty string would erase a provenance the asset already carries and turn
+                // a readable profile into one that reports a missing stamp.
+                var installedVersion = ApaPackageVersion.Current;
+                if (!string.IsNullOrEmpty(installedVersion)) workingCopy.ApaPackageVersion = installedVersion;
+
                 ApaAssetDatabaseUtility.EnsureFolder(normalized);
 
                 if (action == ApaAssetWriteAction.Create)
@@ -243,6 +278,11 @@ namespace AvatarPartAssembler.Editor.Authoring
                     Undo.RegisterCreatedObjectUndo(created, Tr("Create Avatar Part Profile"));
                     EditorUtility.SetDirty(created);
                     AssetDatabase.SaveAssets();
+
+                    // The draft now describes what was written, provenance included. This is the create path, so
+                    // the asset carries the installed version this run stamped onto the working copy; the draft
+                    // adopts it so the two agree from the moment the write returns.
+                    AdoptWrittenPackageVersion(draft, created);
 
                     return new ApaProfileWriteResult(
                         ApaProfileWriteStatus.Created,
@@ -264,6 +304,10 @@ namespace AvatarPartAssembler.Editor.Authoring
                 existing.hideFlags = HideFlags.None;
                 EditorUtility.SetDirty(existing);
                 AssetDatabase.SaveAssets();
+
+                // The draft now describes what was written, provenance included: the update copied the stamped
+                // working copy over the asset, so the draft's record of the package version follows the asset's.
+                AdoptWrittenPackageVersion(draft, existing);
 
                 return new ApaProfileWriteResult(
                     ApaProfileWriteStatus.Updated,
@@ -315,6 +359,44 @@ namespace AvatarPartAssembler.Editor.Authoring
             {
                 if (workingCopy != null) UnityEngine.Object.DestroyImmediate(workingCopy);
             }
+        }
+
+        /// <summary>
+        /// Brings a draft's recorded package version in line with a profile that was written from it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Why this is needed.</b> A profile records the Avatar Part Assembler release that produced it, and
+        /// the writer stamps the installed version onto the asset as it writes. A draft loaded from a profile
+        /// written by an older release — or by no release at all — keeps the older stamp, because nothing the
+        /// author did changed it. That is not an author edit, but <see cref="HasUnsavedChanges"/> compares
+        /// content, so the very next prefab step would report "the draft differs from the asset" and refuse to
+        /// build from a profile that had just been saved.
+        /// </para>
+        /// <para>
+        /// <b>Only a write that happened may call this, and only with the object that was written.</b> The draft
+        /// copies the asset's stamp verbatim, so after a successful write the two agree by construction. A
+        /// refused, cancelled, or failed write must leave the draft alone: nothing on disk changed, and a draft
+        /// that claimed otherwise would hide a real difference between the two.
+        /// </para>
+        /// <para>
+        /// <b>The comparison is not weakened.</b> <see cref="HasUnsavedChanges"/> still serializes every field of
+        /// both profiles and reports any difference; this method removes the difference at its source instead of
+        /// teaching the comparison to ignore one.
+        /// </para>
+        /// </remarks>
+        /// <param name="draft">The draft the profile was written from. Null is ignored.</param>
+        /// <param name="writtenAsset">The profile object the write produced. Null is ignored.</param>
+        /// <returns>True when the draft's recorded version changed.</returns>
+        public static bool AdoptWrittenPackageVersion(ApaProfileDraft draft, ApaPartProfile writtenAsset)
+        {
+            if (draft == null || writtenAsset == null) return false;
+
+            var written = writtenAsset.ApaPackageVersion;
+            if (string.Equals(draft.ApaPackageVersion, written, StringComparison.Ordinal)) return false;
+
+            draft.ApaPackageVersion = written;
+            return true;
         }
 
         /// <summary>

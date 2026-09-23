@@ -67,6 +67,17 @@ namespace AvatarPartAssembler.Editor
         public bool PartMeshFingerprintsVerifiedBeforeMerge { get; }
 
         /// <summary>
+        /// True when the avatar contains Marshmallow PB's editor component and its same-named breast wrapper
+        /// compatibility rule may be used for live bone paths.
+        /// </summary>
+        /// <remarks>
+        /// This is carried by the context instead of inferred from a path alone. A repeated path segment can be
+        /// a legitimate hierarchy authored by somebody else; the exception is enabled only for the plugin known
+        /// to create that shape.
+        /// </remarks>
+        public bool MarshmallowPbCompatibilityEnabled { get; }
+
+        /// <summary>
         /// The target renderer group this context belongs to: the resolved target renderer's avatar-root-relative
         /// path, or an empty string for a single-target context built by the legacy entry points.
         /// </summary>
@@ -101,6 +112,10 @@ namespace AvatarPartAssembler.Editor
         /// True when an earlier NDMF Generating pass validated source part meshes before armature merging. Optional
         /// and defaulting to false for preview and direct core callers.
         /// </param>
+        /// <param name="marshmallowPbCompatibilityEnabled">
+        /// True when the live avatar contains Marshmallow PB and its wrapper compatibility rule is allowed.
+        /// Optional and defaulting to false so direct core callers stay strict.
+        /// </param>
         public ValidationContext(
             BaseSnapshot baseSnapshot,
             IReadOnlyList<PartSnapshot> parts,
@@ -108,7 +123,8 @@ namespace AvatarPartAssembler.Editor
             ApaAvatarCompatibilityProfile expectedCompatibility,
             string groupKey = null,
             bool compatibilityVerified = false,
-            bool partMeshFingerprintsVerifiedBeforeMerge = false)
+            bool partMeshFingerprintsVerifiedBeforeMerge = false,
+            bool marshmallowPbCompatibilityEnabled = false)
         {
             Base = baseSnapshot;
             var partCopy = new PartSnapshot[parts?.Count ?? 0];
@@ -119,6 +135,7 @@ namespace AvatarPartAssembler.Editor
             GroupKey = groupKey ?? string.Empty;
             CompatibilityVerified = compatibilityVerified;
             PartMeshFingerprintsVerifiedBeforeMerge = partMeshFingerprintsVerifiedBeforeMerge;
+            MarshmallowPbCompatibilityEnabled = marshmallowPbCompatibilityEnabled;
         }
 
         private static ApaAvatarCompatibilityProfile CopySignature(ApaAvatarCompatibilityProfile source)
@@ -156,7 +173,7 @@ namespace AvatarPartAssembler.Editor
         {
             return new ValidationContext(
                 baseSnapshot, Parts, NumericPolicy, ExpectedCompatibility, GroupKey, CompatibilityVerified,
-                PartMeshFingerprintsVerifiedBeforeMerge);
+                PartMeshFingerprintsVerifiedBeforeMerge, MarshmallowPbCompatibilityEnabled);
         }
 
         /// <summary>Creates a copy of this context with a different part list.</summary>
@@ -164,7 +181,7 @@ namespace AvatarPartAssembler.Editor
         {
             return new ValidationContext(
                 Base, parts, NumericPolicy, ExpectedCompatibility, GroupKey, CompatibilityVerified,
-                PartMeshFingerprintsVerifiedBeforeMerge);
+                PartMeshFingerprintsVerifiedBeforeMerge, MarshmallowPbCompatibilityEnabled);
         }
 
         /// <summary>Creates a copy of this context with a different target group key.</summary>
@@ -172,7 +189,7 @@ namespace AvatarPartAssembler.Editor
         {
             return new ValidationContext(
                 Base, Parts, NumericPolicy, ExpectedCompatibility, groupKey, CompatibilityVerified,
-                PartMeshFingerprintsVerifiedBeforeMerge);
+                PartMeshFingerprintsVerifiedBeforeMerge, MarshmallowPbCompatibilityEnabled);
         }
 
         /// <summary>

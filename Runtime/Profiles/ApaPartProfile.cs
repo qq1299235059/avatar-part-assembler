@@ -18,6 +18,12 @@ namespace AvatarPartAssembler
     /// describes the shipped build. A profile whose schema version is newer than this build's
     /// <see cref="CurrentSchemaVersion"/> is rejected with <see cref="ApaErrorCode.UnknownProfileSchema"/>.
     /// </para>
+    /// <para>
+    /// <see cref="ApaPackageVersion"/> is the <i>user-facing</i> half of that pair: it records the Avatar Part
+    /// Assembler release that produced the profile, so the installer can compare it with the installed package
+    /// and stay quiet while the two agree. The schema number stays an internal compatibility contract — it says
+    /// nothing about which build wrote the asset, which is why it is never shown to a user as a version.
+    /// </para>
     /// </remarks>
     [CreateAssetMenu(
         fileName = "AvatarPartProfile",
@@ -80,6 +86,25 @@ namespace AvatarPartAssembler
         public const int MinimumMigratableSchemaVersion = 2;
 
         [SerializeField] private int _schemaVersion = CurrentSchemaVersion;
+
+        /// <summary>
+        /// The Avatar Part Assembler package version that produced this profile. Empty means the profile predates
+        /// the stamp, which is a readable state rather than an error.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Written by the authoring writer at the one place a profile reaches disk, and read by the installer to
+        /// decide whether to say anything about the profile's version at all. The installed package version it is
+        /// compared against is never stored here: it belongs to the editor, not to the asset.
+        /// </para>
+        /// <para>
+        /// A read must never invent a value for a profile that carries none. The stamp describes the build that
+        /// wrote the asset, so guessing it would claim a provenance the asset does not have; the installer
+        /// reports the missing stamp instead and offers the rebuild that writes it.
+        /// </para>
+        /// </remarks>
+        [SerializeField] private string _apaPackageVersion = string.Empty;
+
         [SerializeField] private ApaPartIdentity _identity = new ApaPartIdentity();
         [SerializeField] private ApaAvatarCompatibilityProfile _compatibility = new ApaAvatarCompatibilityProfile();
         [SerializeField] private string _partMeshFingerprint = string.Empty;
@@ -99,6 +124,24 @@ namespace AvatarPartAssembler
             get => _schemaVersion;
             set => _schemaVersion = value;
         }
+
+        /// <summary>
+        /// The Avatar Part Assembler package version that wrote this profile, or an empty string when the profile
+        /// predates the stamp.
+        /// </summary>
+        /// <remarks>
+        /// This is the version a user sees. <see cref="SchemaVersion"/> stays an internal compatibility field:
+        /// showing a schema number as the profile's version would answer a question the user did not ask, because
+        /// two different releases can share one schema and one release can read several.
+        /// </remarks>
+        public string ApaPackageVersion
+        {
+            get => _apaPackageVersion ?? string.Empty;
+            set => _apaPackageVersion = value ?? string.Empty;
+        }
+
+        /// <summary>True when this profile records the package version that produced it.</summary>
+        public bool HasApaPackageVersion => !string.IsNullOrEmpty(_apaPackageVersion);
 
         /// <summary>Stable part identity. Legacy display/slot policy fields are ignored.</summary>
         public ApaPartIdentity Identity

@@ -76,6 +76,21 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Nothing to adopt: select a part with an AvatarPartInstaller, or a target body renderer.",
                   "没有可采用的选中项：请选择一个带 AvatarPartInstaller 的部件，或一个目标身体渲染器。" },
 
+                // ---- Workflow summary and collapsible section summaries ---------------------------------
+                // The workflow line is composed from these fragments, so each one has to stand on its own in
+                // both languages: it is read as "流程：选择 …；签名 …；接缝 …；输出 …".
+                { "Workflow: selection {0}; signature {1}; seam {2}; output {3}",
+                  "流程：选择 {0}；签名 {1}；接缝 {2}；输出 {3}" },
+                { "{0}/4 selection fields set", "已设置 {0}/4 个选择字段" },
+                { "{0} problem(s)", "{0} 个问题" },
+                { "captured", "已捕获" },
+                { "not captured", "未捕获" },
+                { "captured, safety data incomplete", "已捕获，校验数据不完整" },
+                { "{0} row(s)", "{0} 行" },
+                { "merge armature on", "已启用骨架合并" },
+                { "merge armature off", "未启用骨架合并" },
+                { "(not set)", "（未设置）" },
+
                 // ---- Selection section -----------------------------------------------------------------
                 { "Selection", "选择" },
                 { "Avatar Root", "角色根对象" },
@@ -636,6 +651,7 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Optional explicit target body. Empty resolves the target from the profile's captured renderer path.",
                   "可选的目标身体。留空时通过配置文件捕获的渲染器路径解析目标。" },
                 { "Enabled For Build", "参与构建" },
+                { "Settings", "设置" },
                 { "Status", "状态" },
                 { "No profile is assigned, so this part cannot be installed. Create a profile or assign an " +
                   "existing one.",
@@ -656,8 +672,6 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "none (0)", "无（0）" },
                 { "Armatures", "骨架" },
                 { "not selected", "未选择" },
-                { "Schema", "架构" },
-                { " (newer than this build)", "（高于本构建支持的版本）" },
                 { "Signature", "签名" },
                 { "captured and complete", "已捕获且完整" },
                 { "captured but incomplete (APA024)", "已捕获但不完整（APA024）" },
@@ -673,6 +687,9 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "(not found: {0})", "（未找到：{0}）" },
                 { "This installer is disabled for build, so it contributes nothing and validation is skipped.",
                   "该安装器已停用构建，因此不产生任何贡献，验证也会被跳过。" },
+                { "This installer is disabled for build, so it contributes nothing and validation is skipped. " +
+                  "Enable 'Enabled For Build' in Settings to install it.",
+                  "该安装器已停用构建，因此不产生任何贡献，验证也会被跳过。请在“设置”中勾选“参与构建”以安装它。" },
                 { "Shortcuts", "快捷操作" },
                 { "Create Profile Asset…", "创建配置文件资产…" },
                 { "Open Profile", "打开配置文件" },
@@ -687,6 +704,58 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "Validation could not build a context: {0}.", "验证无法构建上下文：{0}。" },
                 { "Validation passed: {0}.", "验证通过：{0}。" },
                 { "Validation failed: {0}.", "验证失败：{0}。" },
+                { "Profile Configuration", "配置文件配置" },
+                { "This profile cannot be used by the current build: {0}",
+                  "当前构建无法使用此配置文件：{0}" },
+                { "This profile cannot be used by the current build: {0}. Re-author it in Part Authoring " +
+                  "instead of rebuilding it.",
+                  "当前构建无法使用此配置文件：{0}。请在部件制作窗口中重新制作，而不是重构。" },
+                // ---- The profile's recorded package version (installer inspector) -----------------------
+                // The user-facing version of a profile is the APA package version that wrote it, never the
+                // schema: the schema is an internal compatibility contract and is not shown in the Inspector.
+                // Each line states its own reason and is drawn only when the version does not match.
+                { "This profile does not record which Avatar Part Assembler version created it. " +
+                  "Rebuild its configuration with the installed version ({0}) to stamp it.",
+                  "此配置文件未记录创建它的部件装配器版本。请使用已安装版本（{0}）重构其配置，以写入该版本。" },
+                { "This profile was created by Avatar Part Assembler {0}, and the installed version is " +
+                  "{1}. Rebuild its configuration to recapture it with the installed version.",
+                  "此配置文件由部件装配器 {0} 创建，当前安装的版本为 {1}。请重构其配置，以使用已安装版本重新捕获。" },
+                { "The installed Avatar Part Assembler version could not be read from the package " +
+                  "manifest, and this profile records none either, so its version cannot be " +
+                  "checked.",
+                  "无法从包清单读取已安装的部件装配器版本，此配置文件也未记录版本，因此无法检查其版本。" },
+                { "The installed Avatar Part Assembler version could not be read from the package " +
+                  "manifest, so the {0} this profile records cannot be checked against it.",
+                  "无法从包清单读取已安装的部件装配器版本，因此无法用它与该配置文件记录的 {0} 进行比较。" },
+                { "Rebuild Profile Configuration", "重构配置文件" },
+                { "Place this prefab under an avatar in a scene before rebuilding its configuration. The " +
+                  "refresh needs the live target body and part hierarchy.",
+                  "重构配置前，请先把预制体放到场景中的 Avatar 下。重构需要读取当前目标身体和部件层级。" },
+                { "This profile cannot be rebuilt automatically: {0}. Open Part Authoring and re-author it " +
+                  "from scratch.",
+                  "此配置文件无法自动重构：{0}。请打开部件制作窗口重新制作。" },
+                { "Rebuilding needs a scene avatar root, a part root, and a target body renderer. " +
+                  "Place the prefab under its avatar and assign or resolve the target renderer first.",
+                  "重构需要场景中的 Avatar 根对象、部件根对象和目标身体渲染器。请先把预制体放到 Avatar 下，" +
+                  "并指定或解析目标渲染器。" },
+                { "The assigned profile is not a project asset, so it cannot be rebuilt in place.",
+                  "指定的配置文件不是项目资产，无法原地重构。" },
+                { "Rebuild Profile Configuration?", "重构配置文件？" },
+                { "This refreshes the existing profile at\n\n{0}\n\nusing the current target body and part " +
+                  "hierarchy. Its GUID and authored removal, seam, and material policies are kept. Continue?",
+                  "这会使用当前目标身体和部件层级刷新现有配置文件：\n\n{0}\n\n并保留其 GUID 以及已制作的移除、接缝和材质策略。继续吗？" },
+                { "Rebuild", "重构" },
+                { "Profile rebuild cancelled. Nothing was written.", "配置重构已取消。未写入任何内容。" },
+                { "Profile rebuild was blocked: {0}. Nothing was written.",
+                  "配置重构被阻止：{0}。未写入任何内容。" },
+                { "Rebuilt '{0}': target signature, part mesh fingerprint, and armature selections recaptured; " +
+                  "stable part id and authored removal, seam, and material policies kept.",
+                  "已重构 '{0}'：目标签名、部件网格指纹与骨架选择已重新捕获；稳定部件 ID 以及已制作的移除、接缝和材质策略均保留。" },
+                { "The profile at '{0}' was rewritten, but its asset GUID changed ({1} to {2}), so prefabs " +
+                  "that referenced it no longer do. Undo this change and re-author the profile instead of " +
+                  "rebuilding it.",
+                  "配置文件 '{0}' 已被重写，但其资产 GUID 发生变化（{1} 变为 {2}），引用它的预制体已不再指向它。" +
+                  "请撤销此次修改，改为重新制作该配置文件。" },
                 { "Creating a profile needs an avatar root, a part root, and an explicit target body " +
                   "renderer on this installer. Assign the target renderer object, or use Part Authoring " +
                   "to pick the target body.",
@@ -698,6 +767,15 @@ namespace AvatarPartAssembler.Editor.Localization
 
                 // ---- Bone fit (installer inspector) -----------------------------------------------------
                 { "Bone Fit", "骨骼适配" },
+                { "Advanced: Bone Fit", "高级：骨骼适配" },
+                // The collapsed advanced block's one-line state. Each fragment is also the answer the block
+                // itself gives, so the closed foldout never promises something the open one does not show.
+                { "scene installer only", "仅适用于场景中的安装器" },
+                { "not available in play mode", "播放模式下不可用" },
+                { "armature lock active", "骨架锁定生效中" },
+                { "armature selection problem", "骨架选择有问题" },
+                { "no matching bones", "没有匹配的骨骼" },
+                { "{0} bone pair(s)", "{0} 对骨骼" },
                 { "Bone fit needs the part placed in a scene under an avatar, so it is offered only for a " +
                   "scene installer.",
                   "骨骼适配需要部件已放置到场景中的角色层级下，因此只对场景中的安装器提供。" },

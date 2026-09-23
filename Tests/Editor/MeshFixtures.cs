@@ -457,13 +457,15 @@ namespace AvatarPartAssembler.Tests
             IReadOnlyList<Material> baseMaterials = null,
             IReadOnlyList<ApaUvChannelSemantic> baseUvSemantics = null,
             IReadOnlyList<ApaMaterialSlotSemantic> baseMaterialSemantics = null,
-            Matrix4x4 rendererLocalToWorld = default)
+            Matrix4x4 rendererLocalToWorld = default,
+            bool marshmallowPbCompatibilityEnabled = false)
         {
             return new ValidationContext(
                 BaseSnapshot(baseMesh, baseMaterials, baseUvSemantics, baseMaterialSemantics, rendererLocalToWorld),
                 ValidationContext.SortParts(parts),
                 policy ?? ApaNumericPolicy.Default,
-                signature ?? SignatureFor(baseMesh));
+                signature ?? SignatureFor(baseMesh),
+                marshmallowPbCompatibilityEnabled: marshmallowPbCompatibilityEnabled);
         }
 
         // ---- M2 fixtures: bones ----------------------------------------------------------------------

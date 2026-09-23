@@ -137,6 +137,124 @@ namespace AvatarPartAssembler.Editor
         private static readonly Dictionary<Type, bool> s_avatarBoundaryTypeCache = new Dictionary<Type, bool>();
 
         /// <summary>
+        /// Marshmallow PB's runtime component full name. Reflection keeps this package optional: avatars that do
+        /// not install Marshmallow PB do not need its assembly as an APA compile-time reference.
+        /// </summary>
+        private const string MarshmallowPbComponentTypeName =
+            "wataameya.marshmallow_PB.ndmf.marshmallow_PB_MA";
+
+        /// <summary>Name the plugin gives the prefab root it instantiates directly under the avatar root.</summary>
+        private const string MarshmallowPbGeneratedRootName = "marshmallow_PB";
+
+        /// <summary>
+        /// The plugin's private dummy-bone object. The plugin reparents it to the chest while it wraps the breast
+        /// bones, so this marker is searched for under the whole avatar root rather than only under the generated
+        /// root.
+        /// </summary>
+        private const string MarshmallowPbDummyBoneName = "marshmallow_PB(DummyBone)";
+
+        /// <summary>
+        /// Direct children of the generated root that come from the plugin's own prefab and are never reparented
+        /// by it. Requiring all of them is the structural half of the generated-structure marker.
+        /// </summary>
+        private static readonly string[] MarshmallowPbGeneratedChildNames =
+        {
+            "PhysBone_L", "PhysBone_R", "Collider", "Constraint", "System"
+        };
+
+        /// <summary>
+        /// True when the hierarchy is a Marshmallow PB avatar: either the plugin's setup component is present, or
+        /// the structure that component generates at build time is.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Two shapes, because the plugin removes its own evidence.</b> The setup component
+        /// (<c>wataameya.marshmallow_PB.ndmf.marshmallow_PB_MA</c>) is what an authoring scene carries, and it is
+        /// matched by full name through reflection so this package never needs the plugin's assembly. The plugin
+        /// then runs during NDMF's Resolving phase, destroys that component's GameObject, and reparents its
+        /// dummy-bone object out of the generated root onto the chest. A build-time clone therefore has neither
+        /// the component nor the original <c>marshmallow_PB/marshmallow_PB(DummyBone)</c> nesting, and a detector
+        /// that only knew those two shapes would answer "no Marshmallow PB" in exactly the hierarchy whose wrapped
+        /// bone paths need the exception.
+        /// </para>
+        /// <para>
+        /// The generated-structure half is deliberately narrow: a direct child named <c>marshmallow_PB</c> (the
+        /// instantiated prefab root the plugin keeps) <i>and</i> either the plugin's dummy-bone marker anywhere
+        /// under the avatar root or the generated root's own prefab subsystems. An object a user happens to name
+        /// <c>marshmallow_PB</c> therefore does not enable the vendor exception on its own, which is what keeps a
+        /// hand-authored duplicate hierarchy strict.
+        /// </para>
+        /// <para>
+        /// The component is matched on active objects only, and regardless of its <c>enabled</c> flag, because
+        /// that is what the plugin itself does: it finds its component with <c>GetComponentInChildren</c>, which
+        /// skips inactive objects and ignores <c>enabled</c>. A component that is present but disabled still
+        /// generates the wrapper, so treating it as absent would block a build the plugin had already changed.
+        /// </para>
+        /// </remarks>
+        public static bool HasMarshmallowPb(GameObject avatarRoot)
+        {
+            if (avatarRoot == null) return false;
+            if (HasMarshmallowPbComponent(avatarRoot)) return true;
+            return HasMarshmallowPbGeneratedStructure(avatarRoot);
+        }
+
+        /// <summary>True when an active object under the root carries Marshmallow PB's setup component.</summary>
+        private static bool HasMarshmallowPbComponent(GameObject avatarRoot)
+        {
+            var components = avatarRoot.GetComponentsInChildren<Component>(true);
+            for (var i = 0; i < components.Length; i++)
+            {
+                var component = components[i];
+                if (component == null) continue;
+                if (!component.gameObject.activeInHierarchy) continue;
+
+                for (var current = component.GetType(); current != null && current != typeof(object);
+                     current = current.BaseType)
+                {
+                    if (string.Equals(current.FullName, MarshmallowPbComponentTypeName, StringComparison.Ordinal))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>True when the hierarchy carries the structure the Marshmallow PB plugin generated.</summary>
+        private static bool HasMarshmallowPbGeneratedStructure(GameObject avatarRoot)
+        {
+            var generated = avatarRoot.transform.Find(MarshmallowPbGeneratedRootName);
+            if (generated == null) return false;
+
+            // The plugin reparents its dummy-bone object to the chest, so after it has run the marker is no
+            // longer a child of the generated root. Searching the whole avatar keeps both the pre-run and the
+            // post-run shape detectable with one rule.
+            if (HasDescendantNamed(avatarRoot.transform, MarshmallowPbDummyBoneName)) return true;
+
+            // A generated root whose prefab subsystems are all present is the same structure even if a future
+            // plugin version stops reparenting (or stops creating) the dummy-bone object.
+            for (var i = 0; i < MarshmallowPbGeneratedChildNames.Length; i++)
+            {
+                if (generated.Find(MarshmallowPbGeneratedChildNames[i]) == null) return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>True when the subtree contains a transform with the given name.</summary>
+        private static bool HasDescendantNamed(Transform root, string name)
+        {
+            if (root == null) return false;
+            if (string.Equals(root.name, name, StringComparison.Ordinal)) return true;
+
+            for (var i = 0; i < root.childCount; i++)
+            {
+                if (HasDescendantNamed(root.GetChild(i), name)) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Registers an avatar-root component type as an ownership boundary for installer discovery.
         /// </summary>
         /// <remarks>
@@ -917,6 +1035,13 @@ namespace AvatarPartAssembler.Editor
         {
             var groupIssues = new List<ValidationIssue>();
 
+            // Marshmallow PB runs before the post-merge assembly pass, and it removes its own setup component and
+            // moves its generated root's dummy bone while it wraps the breast bones. The detection therefore
+            // accepts either the component or the generated structure (see HasMarshmallowPb). The fact is
+            // captured once here so every pure rule uses the same vendor-specific compatibility mode without
+            // referencing Marshmallow PB's assembly.
+            var marshmallowPbCompatibilityEnabled = HasMarshmallowPb(avatarRoot);
+
             var targetArmature = ResolveGroupTargetArmature(avatarRoot, targetRenderer, installers, groupIssues);
 
             var baseSnapshot = CaptureBase(avatarRoot, targetRenderer, targetArmature, policy, groupIssues);
@@ -942,6 +1067,7 @@ namespace AvatarPartAssembler.Editor
                 policy,
                 installers,
                 partMeshFingerprintsVerifiedBeforeMerge,
+                marshmallowPbCompatibilityEnabled,
                 groupIssues);
 
             if (groupIssues.Exists(issue => issue.IsBlocking))
@@ -962,7 +1088,8 @@ namespace AvatarPartAssembler.Editor
                 null,
                 groupKey,
                 compatibilityVerified: true,
-                partMeshFingerprintsVerifiedBeforeMerge: partMeshFingerprintsVerifiedBeforeMerge);
+                partMeshFingerprintsVerifiedBeforeMerge: partMeshFingerprintsVerifiedBeforeMerge,
+                marshmallowPbCompatibilityEnabled: marshmallowPbCompatibilityEnabled);
         }
 
         /// <summary>
@@ -1108,6 +1235,7 @@ namespace AvatarPartAssembler.Editor
             ApaNumericPolicy policy,
             IReadOnlyList<AvatarPartInstaller> installers,
             bool partMeshFingerprintsVerifiedBeforeMerge,
+            bool marshmallowPbCompatibilityEnabled,
             List<ValidationIssue> issues)
         {
             var rule = new CompatibilityRule();
@@ -1124,7 +1252,8 @@ namespace AvatarPartAssembler.Editor
                         parts,
                         policy,
                         profile.CompatibilityOrNull,
-                        partMeshFingerprintsVerifiedBeforeMerge: partMeshFingerprintsVerifiedBeforeMerge),
+                        partMeshFingerprintsVerifiedBeforeMerge: partMeshFingerprintsVerifiedBeforeMerge,
+                        marshmallowPbCompatibilityEnabled: marshmallowPbCompatibilityEnabled),
                     localIssues);
 
                 var partId = PartIdOf(installer);

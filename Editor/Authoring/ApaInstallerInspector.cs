@@ -10,7 +10,7 @@ namespace AvatarPartAssembler.Editor.Authoring
 {
     /// <summary>
     /// The Avatar Part Installer inspector: whether this part is ready, and the shortcuts that open the authoring
-    /// workflow.
+    /// workflow, including the profile's recorded package-version verdict and the guarded profile refresh.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -75,6 +75,26 @@ namespace AvatarPartAssembler.Editor.Authoring
         [NonSerialized] private string _healthDetail = string.Empty;
 
         /// <summary>
+        /// Whether the advanced bone-fit block is expanded. Collapsed by default, because bone fit, follow, and
+        /// scale are creator actions: the first screen belongs to "is this part usable" and "what do I do next".
+        /// </summary>
+        /// <remarks>
+        /// Inspector state, never component data: the two preferences the block edits are serialized on the
+        /// installer, while how the block is displayed is a property of this Inspector session. Nothing here is
+        /// written into a scene or a profile.
+        /// </remarks>
+        [NonSerialized] private bool _showAdvancedBoneFit;
+
+        /// <summary>Whether the diagnostics list is expanded. See <see cref="DrawDiagnostics"/> for the default.</summary>
+        [NonSerialized] private bool _showDiagnostics;
+
+        /// <summary>
+        /// True once the user opened or closed the diagnostics foldout themselves, which is what stops the
+        /// "expanded while there are errors" default from overriding that choice on the next repaint.
+        /// </summary>
+        [NonSerialized] private bool _diagnosticsChoiceMade;
+
+        /// <summary>
         /// The input signature the cached validation belongs to. A repaint revalidates only when this changes,
         /// which is what keeps a full avatar validation out of the repaint loop.
         /// </summary>
@@ -93,6 +113,8 @@ namespace AvatarPartAssembler.Editor.Authoring
             _boneFitStatus = string.Empty;
             _health = ApaInstallerHealth.NotValidated;
             _healthDetail = string.Empty;
+            _showDiagnostics = false;
+            _diagnosticsChoiceMade = false;
 
             // An empty signature can never match a real one, so the first paint validates once. The verdict is
             // therefore real from the moment the Inspector opens, without a validation per repaint.
@@ -100,19 +122,26 @@ namespace AvatarPartAssembler.Editor.Authoring
         }
 
         /// <inheritdoc />
+        /// <remarks>
+        /// <para>
+        /// <b>The reading order is the end-user order.</b> The status verdict comes first, because "can I use
+        /// this part" is the question a user opens the Inspector with; the main actions follow, so the next step
+        /// is one click away and not buried under fields; the serialized fields sit below them, still editable and
+        /// still visible; the creator-only bone-fit block and the diagnostics list are foldouts that do not take
+        /// over the first screen. The order is asserted by a source contract.
+        /// </para>
+        /// <para>
+        /// The serialized object is updated once at the top and applied right after the fields, so a field edit is
+        /// committed in the same pass that drew it while the foldouts below still see a valid
+        /// <see cref="SerializedObject"/>.
+        /// </para>
+        /// </remarks>
         public override void OnInspectorGUI()
         {
             var installer = target as AvatarPartInstaller;
             if (installer == null) return;
 
             serializedObject.Update();
-            DrawFields();
-            serializedObject.ApplyModifiedProperties();
-
-            EditorGUILayout.Space();
-            LanguagePopup(Content(
-                "Language",
-                "The language of the Avatar Part Assembler user interface. Stored per user, not in the project."));
 
             if (targets.Length > 1)
             {
@@ -123,13 +152,26 @@ namespace AvatarPartAssembler.Editor.Authoring
             }
 
             DrawHealth(installer);
-            DrawShortcuts(installer);
-            DrawBoneFit(installer);
+            DrawActions(installer);
+            DrawSettings();
+            serializedObject.ApplyModifiedProperties();
+            DrawAdvancedBoneFit(installer);
             DrawDiagnostics();
         }
 
-        private void DrawFields()
+        /// <summary>
+        /// The installer's serialized fields, drawn below the status and the actions.
+        /// </summary>
+        /// <remarks>
+        /// They stay expanded rather than becoming a foldout: the profile and the part root are what a user
+        /// assigns when something is not configured yet, and hiding them behind a click would trade one kind of
+        /// noise for a dead end. They are simply no longer the first thing on screen.
+        /// </remarks>
+        private void DrawSettings()
         {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField(Tr("Settings"), EditorStyles.boldLabel);
+
             if (_profileProperty == null || _partRootProperty == null
                 || _targetRendererProperty == null || _enabledForBuildProperty == null
                 || _followAvatarBonesProperty == null || _includeScaleProperty == null)
@@ -174,7 +216,14 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private void DrawHealth(AvatarPartInstaller installer)
         {
+            EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(Tr("Status"), EditorStyles.boldLabel);
+
+            // The language selector shares the status row: it stays on the first screen — which matters most to
+            // the user who cannot read the current language — without pushing the verdict down a row.
+            GUILayout.FlexibleSpace();
+            LanguagePopup(null, GUILayout.Width(110));
+            EditorGUILayout.EndHorizontal();
 
             if (installer.Profile == null)
             {
@@ -190,7 +239,8 @@ namespace AvatarPartAssembler.Editor.Authoring
             {
                 ClearValidationCache();
                 EditorGUILayout.HelpBox(
-                    Tr("This installer is disabled for build, so it contributes nothing and validation is skipped."),
+                    Tr("This installer is disabled for build, so it contributes nothing and validation is " +
+                       "skipped. Enable 'Enabled For Build' in Settings to install it."),
                     MessageType.Info);
                 return;
             }
@@ -199,7 +249,8 @@ namespace AvatarPartAssembler.Editor.Authoring
             {
                 ClearValidationCache();
                 // A prefab asset has no scene hierarchy to validate against, and validating it in place would
-                // report defects that do not exist. The shortcut section repeats this in more detail.
+                // report defects that do not exist. This one box is the status and the next step; the action
+                // block below deliberately does not repeat it.
                 EditorGUILayout.HelpBox(
                     Tr("This installer belongs to a prefab asset, so it can only be validated after it is placed " +
                        "under an avatar in a scene."),
@@ -237,7 +288,8 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// <remarks>
         /// The label carries the message and the box carries the color, with a text color chosen to stay readable
         /// on the filled background in both editor skins. The background is painted only on the repaint event;
-        /// <see cref="EditorGUI.DrawRect"/> is a no-op for every other event.
+        /// <see cref="EditorGUI.DrawRect"/> is a no-op for every other event. It is kept directly below
+        /// <see cref="DrawHealth"/> because the health verdict and its box are one unit.
         /// </remarks>
         private static void DrawHealthBox(string message, bool ready)
         {
@@ -255,13 +307,228 @@ namespace AvatarPartAssembler.Editor.Authoring
                 style);
         }
 
+        /// <summary>
+        /// The main action area: open or create the profile, edit it in Part Authoring, validate, clear.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>One place for the routine actions.</b> The shortcuts block and the rebuild button used to be two
+        /// sections with two explanations of the same prefab-asset condition; they are one block now, ordered by
+        /// what a user does next rather than by which subsystem the action belongs to. Nothing about what a button
+        /// does changed: every call, guard, and confirmation is the one that was here before.
+        /// </para>
+        /// <para>
+        /// <b>The rebuild is not one of the routine actions.</b> It is the fix for one condition — a profile whose
+        /// recorded package version is missing or different — so it is drawn by
+        /// <see cref="DrawProfileVersionStatus"/> next to the warning that asks for it, and a profile that is up
+        /// to date has no rebuild entry anywhere in the Inspector.
+        /// </para>
+        /// <para>
+        /// <b>The prefab-asset note is stated once.</b> The status box above already says that a prefab asset can
+        /// only be validated once it is placed under an avatar, so the block states nothing about it and lets the
+        /// disabled buttons and that verdict speak.
+        /// </para>
+        /// </remarks>
+        private void DrawActions(AvatarPartInstaller installer)
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField(Tr("Actions"), EditorStyles.boldLabel);
+
+            var profile = installer.Profile;
+            var isPrefabAsset = ApaAssetDatabaseUtility.IsPersistent(installer);
+
+            EditorGUILayout.BeginHorizontal();
+
+            if (profile == null)
+            {
+                EditorGUI.BeginDisabledGroup(isPrefabAsset);
+                if (GUILayout.Button(Tr("Create Profile Asset…")))
+                {
+                    CreateProfileAsset(installer);
+                }
+
+                EditorGUI.EndDisabledGroup();
+            }
+            else
+            {
+                if (GUILayout.Button(Tr("Open Profile")))
+                {
+                    Selection.activeObject = profile;
+                    EditorGUIUtility.PingObject(profile);
+                }
+            }
+
+            EditorGUI.BeginDisabledGroup(isPrefabAsset);
+            if (GUILayout.Button(Tr("Edit In Part Authoring")))
+            {
+                var root = ApaAuthoringSelection.FindAvatarRoot(installer.transform);
+                ApaAuthoringWindow.OpenWith(
+                    profile,
+                    installer.ResolvePartRoot(),
+                    root != null ? root.gameObject : null,
+                    ResolveTargetRenderer(installer));
+            }
+
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.EndHorizontal();
+
+            // The profile's readability is read once here and handed to the version block below, which is the only
+            // place that needs it: an unreadable profile is reported there as the error it is.
+            var migrationMessage = string.Empty;
+            var readable = profile == null || profile.TryMigrate(out migrationMessage);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUI.BeginDisabledGroup(!installer.EnabledForBuild || isPrefabAsset);
+            if (GUILayout.Button(Tr("Validate")))
+            {
+                RunValidation(installer, true);
+            }
+
+            EditorGUI.EndDisabledGroup();
+
+            if (GUILayout.Button(Tr("Clear Results")))
+            {
+                ClearResults(installer);
+            }
+
+            EditorGUILayout.EndHorizontal();
+
+            // The rebuild is deliberately not part of this row. Rebuilding is not a routine action: it is the fix
+            // for one condition — a profile whose recorded package version is missing or different — so it is
+            // drawn only by DrawProfileVersionStatus, next to the warning that asks for it, and an up-to-date
+            // profile has no rebuild entry at all.
+            DrawProfileVersionStatus(installer, profile, readable, migrationMessage);
+
+            if (!string.IsNullOrEmpty(_status))
+            {
+                EditorGUILayout.HelpBox(_status, MessageType.None);
+            }
+        }
+
+        /// <summary>
+        /// The profile's version line: silent while the profile records the installed package version, and a
+        /// compact warning with the one action that resolves it when it does not.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>The version a user sees is the package version, never the schema.</b> A schema number describes the
+        /// shape of the serialized data — an internal compatibility contract — and says nothing about which
+        /// release produced the profile, so the normal Inspector never prints one. The schema verdict survives
+        /// where it is load-bearing: <see cref="ApaPartProfile.TryMigrate"/> still decides whether the profile can
+        /// be read at all, and an unreadable profile is reported as the error it is.
+        /// </para>
+        /// <para>
+        /// <b>The normal case draws nothing.</b> A profile that records the installed version is the expected
+        /// state, and a permanent "everything is fine" line is exactly the noise this layout removes. Only a
+        /// missing or different version is stated, together with the rebuild that rewrites the stamp — a warning
+        /// without its fix would be a dead end.
+        /// </para>
+        /// </remarks>
+        private void DrawProfileVersionStatus(
+            AvatarPartInstaller installer, ApaPartProfile profile, bool readable, string migrationMessage)
+        {
+            if (profile == null) return;
+
+            if (!readable)
+            {
+                EditorGUILayout.HelpBox(
+                    TrFormat(
+                        "This profile cannot be used by the current build: {0}. Re-author it in Part Authoring " +
+                        "instead of rebuilding it.",
+                        migrationMessage),
+                    MessageType.Error);
+                return;
+            }
+
+            var recorded = profile.ApaPackageVersion;
+            var installed = ApaPackageVersion.Current;
+
+            switch (ApaPackageVersion.Compare(recorded, installed))
+            {
+                case ApaPackageVersionVerdict.Matches:
+                    // Nothing is drawn: the profile and the installed package agree, which is the normal state.
+                    return;
+
+                case ApaPackageVersionVerdict.NotRecorded:
+                    EditorGUILayout.HelpBox(
+                        TrFormat(
+                            "This profile does not record which Avatar Part Assembler version created it. " +
+                            "Rebuild its configuration with the installed version ({0}) to stamp it.",
+                            installed),
+                        MessageType.Warning);
+                    DrawRebuildProfileButton(installer);
+                    return;
+
+                case ApaPackageVersionVerdict.Mismatch:
+                    EditorGUILayout.HelpBox(
+                        TrFormat(
+                            "This profile was created by Avatar Part Assembler {0}, and the installed version is " +
+                            "{1}. Rebuild its configuration to recapture it with the installed version.",
+                            recorded, installed),
+                        MessageType.Warning);
+                    DrawRebuildProfileButton(installer);
+                    return;
+
+                default:
+                    // Unverifiable: the installed version could not be read, so there is nothing to compare and
+                    // no action to offer. The reason is stated — the profile's own record is named when it has
+                    // one — rather than a schema number being shown in the version's place.
+                    EditorGUILayout.LabelField(
+                        string.IsNullOrEmpty(recorded)
+                            ? Tr("The installed Avatar Part Assembler version could not be read from the package " +
+                                 "manifest, and this profile records none either, so its version cannot be " +
+                                 "checked.")
+                            : TrFormat(
+                                "The installed Avatar Part Assembler version could not be read from the package " +
+                                "manifest, so the {0} this profile records cannot be checked against it.",
+                                recorded),
+                        EditorStyles.wordWrappedMiniLabel);
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// The one rebuild entry: drawn directly under the version warning that asks for it, and nowhere else.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>The rebuild is not a routine action.</b> It exists to rewrite a profile that no longer records the
+        /// installed package version, so it belongs beside the warning that says so; a profile that is up to date
+        /// never draws this button, which is what keeps the normal Inspector free of a permanent rebuild entry.
+        /// Its only two callers are the two actionable verdicts — <c>NotRecorded</c> and <c>Mismatch</c> — so the
+        /// unreadable-version state offers nothing (nothing there proves a rebuild is needed) and an unreadable
+        /// profile offers re-authoring instead.
+        /// </para>
+        /// <para>
+        /// The disabled condition is the one the action row used to apply — a prefab asset has no live hierarchy
+        /// to recapture from — and the call behind the button is the same guarded
+        /// <see cref="RebuildProfileConfiguration"/> it always was, so what the button does is unchanged.
+        /// </para>
+        /// </remarks>
+        private void DrawRebuildProfileButton(AvatarPartInstaller installer)
+        {
+            EditorGUI.BeginDisabledGroup(ApaAssetDatabaseUtility.IsPersistent(installer));
+            if (GUILayout.Button(Tr("Rebuild Profile Configuration")))
+            {
+                RebuildProfileConfiguration(installer);
+            }
+
+            EditorGUI.EndDisabledGroup();
+        }
+
         /// <summary>Discards a verdict that cannot describe the installer's current non-scene state.</summary>
+        /// <remarks>Used by every state in which a full validation cannot describe this installer.</remarks>
         private void ClearValidationCache()
         {
             _validation = null;
             _health = ApaInstallerHealth.NotValidated;
             _healthDetail = string.Empty;
             _validatedSignature = string.Empty;
+
+            // Nothing is left to keep open or closed, so the diagnostics foldout returns to its automatic
+            // default: expanded again as soon as a later validation reports an error.
+            _diagnosticsChoiceMade = false;
         }
 
         /// <summary>
@@ -293,6 +560,8 @@ namespace AvatarPartAssembler.Editor.Authoring
                 ":",
                 (profile != null ? EditorUtility.GetDirtyCount(profile) : 0).ToString(CultureInfo.InvariantCulture),
                 ":",
+                (profile != null ? profile.SchemaVersion : 0).ToString(CultureInfo.InvariantCulture),
+                ":",
                 (partRoot != null ? partRoot.GetInstanceID() : 0).ToString(CultureInfo.InvariantCulture),
                 ":",
                 (target != null ? target.GetInstanceID() : 0).ToString(CultureInfo.InvariantCulture),
@@ -300,87 +569,72 @@ namespace AvatarPartAssembler.Editor.Authoring
                 installer.EnabledForBuild ? "1" : "0");
         }
 
-        private void DrawShortcuts(AvatarPartInstaller installer)
+        /// <summary>
+        /// The collapsed advanced block: bone fit, follow, and scale, behind one foldout that summarizes itself.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// These are creator actions — they align a part authored against a rest-pose body onto the avatar's
+        /// current pose, and they write scene transforms while following — so they are not what a user opens the
+        /// Inspector to do, and they no longer take over the first screen. The block is not lost: the foldout is
+        /// always drawn, and its title carries the current state so the reason to open it is visible while it is
+        /// closed.
+        /// </para>
+        /// <para>
+        /// The summary is built from the same checks the block itself runs, and it never mutates anything: the
+        /// armature resolution and the bone walk are read-only, and the merge-lock scan is a component query.
+        /// </para>
+        /// </remarks>
+        private void DrawAdvancedBoneFit(AvatarPartInstaller installer)
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Shortcuts"), EditorStyles.boldLabel);
+            _showAdvancedBoneFit = EditorGUILayout.Foldout(
+                _showAdvancedBoneFit,
+                FoldoutLabel(Tr("Advanced: Bone Fit"), DescribeBoneFitSummary(installer)),
+                true);
 
-            // A prefab asset has no scene hierarchy: its part root resolves to an object inside the prefab and
-            // "the avatar root" resolves to the prefab root, which is not an avatar. Opening the authoring window
-            // in that state, or capturing a signature from it, would present a hierarchy that does not exist in
-            // any scene — so the two shortcuts that do that are offered only for a scene installer, with the same
-            // test that already guards Validate.
-            var isPrefabAsset = ApaAssetDatabaseUtility.IsPersistent(installer);
+            if (!_showAdvancedBoneFit) return;
 
-            EditorGUILayout.BeginHorizontal();
+            DrawBoneFit(installer);
+        }
 
-            if (installer.Profile == null)
+        /// <summary>
+        /// The one-line state the collapsed advanced block shows: why it is unavailable, what needs fixing, or
+        /// how many bones the fit would align.
+        /// </summary>
+        /// <remarks>
+        /// The order is the order of the checks inside the block, so the summary cannot describe a state the block
+        /// would not reach: unavailable placement first, then the armature lock that gates the controls, then the
+        /// resolution failure, then the pair count. The reason tokens are the stable identifiers
+        /// <see cref="ApaBoneFitter.TryResolveArmatures"/> reports and are translated by
+        /// <see cref="DescribeBoneFitReason"/>, exactly as the block's own message is.
+        /// </remarks>
+        private static string DescribeBoneFitSummary(AvatarPartInstaller installer)
+        {
+            if (ApaAssetDatabaseUtility.IsPersistent(installer)) return Tr("scene installer only");
+            if (Application.isPlaying) return Tr("not available in play mode");
+
+            if (CollectActiveMergeLocks(installer.transform, null).Count > 0) return Tr("armature lock active");
+
+            if (!ApaBoneFitter.TryResolveArmatures(
+                    installer, out var partArmature, out var targetArmature, out var reason))
             {
-                EditorGUI.BeginDisabledGroup(isPrefabAsset);
-                if (GUILayout.Button(Tr("Create Profile Asset…")))
-                {
-                    CreateProfileAsset(installer);
-                }
-
-                EditorGUI.EndDisabledGroup();
-            }
-            else
-            {
-                if (GUILayout.Button(Tr("Open Profile")))
-                {
-                    Selection.activeObject = installer.Profile;
-                    EditorGUIUtility.PingObject(installer.Profile);
-                }
-            }
-
-            EditorGUI.BeginDisabledGroup(isPrefabAsset);
-            if (GUILayout.Button(Tr("Edit In Part Authoring")))
-            {
-                var root = ApaAuthoringSelection.FindAvatarRoot(installer.transform);
-                ApaAuthoringWindow.OpenWith(
-                    installer.Profile,
-                    installer.ResolvePartRoot(),
-                    root != null ? root.gameObject : null,
-                    ResolveTargetRenderer(installer));
+                return reason == "no-selection" || reason == "resolve-part" || reason == "resolve-target"
+                    ? Tr("armature selection problem")
+                    : DescribeBoneFitReason(reason);
             }
 
-            EditorGUI.EndDisabledGroup();
+            var pairs = new List<ApaBoneFitter.BonePair>();
+            var unmatched = new List<string>();
+            ApaBoneFitter.CollectBonePairs(partArmature, targetArmature, pairs, unmatched);
 
-            EditorGUILayout.EndHorizontal();
+            return pairs.Count == 0 ? Tr("no matching bones") : TrFormat("{0} bone pair(s)", pairs.Count);
+        }
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUI.BeginDisabledGroup(!installer.EnabledForBuild || isPrefabAsset);
-            if (GUILayout.Button(Tr("Validate")))
-            {
-                RunValidation(installer, true);
-            }
-
-            EditorGUI.EndDisabledGroup();
-
-            if (GUILayout.Button(Tr("Clear Results")))
-            {
-                ClearResults(installer);
-            }
-
-            EditorGUILayout.EndHorizontal();
-
-            if (isPrefabAsset)
-            {
-                // A prefab asset has no scene transform, so its renderer matrices live in a different space than
-                // the avatar's. Validating geometry in that state would report seam defects that do not exist,
-                // and authoring from it would capture a signature for a hierarchy that is not in a scene, so
-                // both are offered only where they are meaningful.
-                EditorGUILayout.HelpBox(
-                    Tr("This installer belongs to a prefab asset. Place the prefab under an avatar in a scene and " +
-                       "select it there to validate geometry or to edit it in Part Authoring, so the part and the " +
-                       "body share a space."),
-                    MessageType.Info);
-            }
-
-            if (!string.IsNullOrEmpty(_status))
-            {
-                EditorGUILayout.HelpBox(_status, MessageType.None);
-            }
+        /// <summary>Joins a section title and its summary into the one line a collapsed foldout shows.</summary>
+        private static string FoldoutLabel(string title, string summary)
+        {
+            return string.IsNullOrEmpty(summary) ? title : title + " — " + summary;
         }
 
         /// <summary>
@@ -402,9 +656,8 @@ namespace AvatarPartAssembler.Editor.Authoring
         /// </remarks>
         private void DrawBoneFit(AvatarPartInstaller installer)
         {
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Bone Fit"), EditorStyles.boldLabel);
-
+            // The block is drawn inside its own foldout, so it does not repeat the title: the foldout row above
+            // already names the block and carries its state.
             if (ApaAssetDatabaseUtility.IsPersistent(installer))
             {
                 EditorGUILayout.HelpBox(
@@ -698,13 +951,50 @@ namespace AvatarPartAssembler.Editor.Authoring
             _boneFitStatus = TrFormat("Set {0} merge configuration(s) to Not Locked.", merges.Count);
         }
 
+        /// <summary>
+        /// The diagnostics list, behind a foldout that opens itself while the last validation reported errors.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The full list is what a user who has to fix something needs, and it is exactly what a user who does
+        /// not should not have to scroll past: the foldout is collapsed for a clean verdict and expanded while
+        /// there are errors, so "See the details below" in the red box stays true without the list taking over
+        /// every Inspector that has a warning in it.
+        /// </para>
+        /// <para>
+        /// <b>The user's own choice wins.</b> Once the foldout is clicked, the automatic default stops applying,
+        /// so a user who collapsed a failing report is not overruled on the next repaint. Clearing the results
+        /// resets that, because there is then nothing to keep open or closed.
+        /// </para>
+        /// </remarks>
         private void DrawDiagnostics()
         {
-            if (_validation == null) return;
+            if (!_diagnosticsChoiceMade)
+            {
+                _showDiagnostics = _validation != null && _validation.HasErrors;
+            }
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField(Tr("Validation"), EditorStyles.boldLabel);
-            EditorGUILayout.LabelField(ApaDiagnosticText.Summarize(_validation));
+
+            var expanded = _showDiagnostics;
+            var next = EditorGUILayout.Foldout(
+                expanded,
+                FoldoutLabel(Tr("Validation"), DescribeDiagnosticsSummary()),
+                true);
+
+            if (next != expanded)
+            {
+                _showDiagnostics = next;
+                _diagnosticsChoiceMade = true;
+            }
+
+            if (!_showDiagnostics) return;
+
+            if (_validation == null)
+            {
+                EditorGUILayout.LabelField(Tr("Not validated yet."), EditorStyles.miniLabel);
+                return;
+            }
 
             for (var i = 0; i < _validation.Issues.Count; i++)
             {
@@ -714,6 +1004,14 @@ namespace AvatarPartAssembler.Editor.Authoring
                 EditorGUILayout.LabelField(ApaDiagnosticText.Format(issue), EditorStyles.wordWrappedMiniLabel);
                 GUI.color = previous;
             }
+        }
+
+        /// <summary>The one-line state the collapsed diagnostics foldout shows.</summary>
+        private string DescribeDiagnosticsSummary()
+        {
+            return _validation == null
+                ? Tr("Not validated yet.")
+                : ApaDiagnosticText.Summarize(_validation);
         }
 
         /// <summary>
@@ -787,6 +1085,245 @@ namespace AvatarPartAssembler.Editor.Authoring
             _health = ApaInstallerHealth.NotValidated;
             _healthDetail = Tr("Validation results were cleared. Press Validate to check this part again.");
             _validatedSignature = ComputeValidationSignature(installer);
+            _diagnosticsChoiceMade = false;
+        }
+
+        /// <summary>
+        /// Recaptures the installer configuration from the current avatar and updates the existing profile asset.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>The order is the safety property.</b> Everything that can refuse the rebuild runs before the author
+        /// is asked to confirm: the profile is read, the live target and part are captured, the draft is checked
+        /// for blocking findings, and the assembly is planned through the same dry run the authoring window uses.
+        /// Only a draft that passed all of that reaches the confirmation, so the dialog asks about a write that
+        /// will actually happen, and a rebuild that is going to be refused never asks at all.
+        /// </para>
+        /// <para>
+        /// <b>What is kept and what is refreshed.</b> The draft starts from the profile, so the stable part id
+        /// and every authored removal, seam, material, UV, bone-merge, and blend-shape policy survive. Only the
+        /// live capture data is replaced: the target compatibility signature, the part mesh fingerprint, the two
+        /// armature selections, and a semantic declaration the profile never made. The write goes through
+        /// <see cref="ApaProfileWriter.Save"/> with overwrite allowed, which updates the existing asset in place
+        /// through <c>CopySerialized</c>, so the GUID every prefab references is kept — and that is verified
+        /// afterwards rather than assumed.
+        /// </para>
+        /// <para>
+        /// A profile the build cannot read is refused here as well as by the button's disabled state: schema 1
+        /// and a future schema cannot be migrated without guessing, so neither is ever rewritten into the current
+        /// schema.
+        /// </para>
+        /// </remarks>
+        private void RebuildProfileConfiguration(AvatarPartInstaller installer)
+        {
+            if (installer == null || installer.Profile == null) return;
+
+            var profile = installer.Profile;
+            if (!profile.TryMigrate(out var migrationMessage))
+            {
+                _status = TrFormat(
+                    "This profile cannot be rebuilt automatically: {0}. Open Part Authoring and re-author it " +
+                    "from scratch.", migrationMessage);
+                return;
+            }
+
+            // A removal profile whose two address arrays disagree reads as "no triangles removed", because the
+            // missing entry cannot be reconstructed without guessing which one it was. A rebuild would therefore
+            // write that empty set over the author's removal selection, so the condition is refused here — with
+            // the code, message, and reason token the build reports for it — instead of being normalized away by
+            // the draft. The dry run cannot catch this: by the time it runs, the draft has already converted the
+            // corrupt storage into a well-formed empty mask.
+            var removal = profile.RemovalOrNull;
+            if (removal != null && removal.HasCorruptStorage)
+            {
+                _validation = ValidationResult.Build(new List<ValidationIssue>
+                {
+                    ValidationIssue.Error(
+                        ApaErrorCode.InvalidTriangleAddress,
+                        ApaIssuePhase.Removal,
+                        "The removal profile has mismatched submesh and triangle address arrays. " +
+                        "The missing address component cannot be reconstructed without guessing; re-author " +
+                        "the removal selection.",
+                        ApaPartIdentityResolver.ResolvePartId(installer),
+                        detail: "reason=corrupt-removal-storage")
+                });
+                _health = ApaInstallerHealth.Problem;
+                _status = TrFormat(
+                    "Profile rebuild was blocked: {0}. Nothing was written.",
+                    ApaDiagnosticText.Summarize(_validation));
+                return;
+            }
+
+            var avatarRoot = ApaAuthoringSelection.FindAvatarRoot(installer.transform);
+            var partRoot = installer.ResolvePartRoot();
+            var target = ResolveTargetRenderer(installer);
+            if (avatarRoot == null || partRoot == null || target == null)
+            {
+                _status = Tr("Rebuilding needs a scene avatar root, a part root, and a target body renderer. " +
+                             "Place the prefab under its avatar and assign or resolve the target renderer first.");
+                return;
+            }
+
+            var profilePath = AssetDatabase.GetAssetPath(profile);
+            if (string.IsNullOrEmpty(profilePath))
+            {
+                _status = Tr("The assigned profile is not a project asset, so it cannot be rebuilt in place.");
+                return;
+            }
+
+            // ---- Capture: the draft starts from the profile, so every authored policy is kept -----------------
+            var draft = ApaProfileDraft.FromProfile(profile);
+            ApaAuthoringSelection.ProposeArmatures(
+                avatarRoot.transform,
+                target,
+                partRoot,
+                out var targetArmature,
+                out var partArmature);
+            draft.SetArmatures(avatarRoot.transform, targetArmature, partRoot.transform, partArmature);
+
+            var rebuilt = new List<ValidationIssue>();
+            draft.Compatibility = ApaCompatibilityCapture.Capture(
+                avatarRoot.gameObject,
+                target,
+                out var captureIssues,
+                targetArmature);
+            rebuilt.AddRange(captureIssues);
+
+            var partRenderer = partRoot.GetComponentInChildren<Renderer>(true);
+            var partMesh = ApaCompatibilityCapture.ResolveMesh(partRenderer);
+            ValidationIssue protectedIssue = null;
+            if (partMesh != null)
+            {
+                if (!partMesh.isReadable)
+                {
+                    rebuilt.Add(ApaCompatibilityCapture.NotReadableIssue(partMesh));
+                }
+                else
+                {
+                    var snapshot = MeshSnapshotFactory.Capture(partMesh, null, out var snapshotIssues);
+                    rebuilt.AddRange(snapshotIssues);
+
+                    // A snapshot that could not be taken leaves the profile's own fingerprint in place rather
+                    // than clearing it: an absent fingerprint is not checked at all, so dropping it would make
+                    // the rebuilt profile weaker than the one it replaced.
+                    if (snapshot != null) draft.PartMeshFingerprint = ApaMeshFingerprint.OfSnapshot(snapshot);
+
+                    // Empty declarations are the legacy default. Existing explicit declarations and material
+                    // policies are author choices, so they are preserved rather than silently replaced.
+                    if (snapshot != null && draft.UvSemantics.Length == 0) draft.InferUvSemanticsFrom(snapshot);
+                    if (snapshot != null && draft.MaterialSemantics.Length == 0)
+                    {
+                        draft.InferMaterialSemanticsFrom(
+                            partMesh.subMeshCount,
+                            partRenderer != null ? partRenderer.sharedMaterials : null);
+                    }
+                }
+            }
+            else if (partRenderer != null
+                     && ApaProtectedPartGeometry.TryDecode(
+                         partRenderer,
+                         partRoot,
+                         out var protectedData,
+                         out _,
+                         out protectedIssue))
+            {
+                var snapshot = protectedData.CreateSnapshot();
+                draft.PartMeshFingerprint = ApaMeshFingerprint.OfSnapshot(snapshot);
+                if (draft.UvSemantics.Length == 0) draft.InferUvSemanticsFrom(snapshot);
+                if (draft.MaterialSemantics.Length == 0)
+                {
+                    draft.InferMaterialSemanticsFrom(
+                        protectedData.SubMeshCount,
+                        partRenderer.sharedMaterials);
+                }
+            }
+            else if (protectedIssue != null)
+            {
+                rebuilt.Add(protectedIssue);
+            }
+
+            if (rebuilt.Exists(issue => issue != null && issue.IsBlocking))
+            {
+                _validation = ValidationResult.Build(rebuilt);
+                _health = ApaInstallerHealth.Problem;
+                _status = TrFormat(
+                    "Profile rebuild was blocked: {0}. Nothing was written.",
+                    ApaDiagnosticText.Summarize(_validation));
+                return;
+            }
+
+            // ---- Prove: the rebuilt draft must be assemblable before the author is asked about a write --------
+            var selection = new ApaAuthoringSelection
+            {
+                AvatarRoot = avatarRoot.gameObject,
+                TargetRenderer = target,
+                PartRoot = partRoot,
+                PartRenderer = partRenderer,
+                TargetArmature = targetArmature,
+                PartArmature = partArmature
+            };
+            var dryRun = ApaAuthoringValidation.DryRun(selection, draft);
+            if (!dryRun.Succeeded)
+            {
+                _validation = dryRun.Validation;
+                _health = ApaInstallerHealth.Problem;
+                _status = TrFormat(
+                    "Profile rebuild was blocked: {0}. Nothing was written.",
+                    ApaDiagnosticText.Summarize(dryRun.Validation));
+                return;
+            }
+
+            // ---- Confirm, then write --------------------------------------------------------------------------
+            if (!EditorUtility.DisplayDialog(
+                    Tr("Rebuild Profile Configuration?"),
+                    TrFormat(
+                        "This refreshes the existing profile at\n\n{0}\n\nusing the current target body and part " +
+                        "hierarchy. Its GUID and authored removal, seam, and material policies are kept. Continue?",
+                        profilePath),
+                    Tr("Rebuild"),
+                    Tr("Cancel")))
+            {
+                _status = Tr("Profile rebuild cancelled. Nothing was written.");
+                return;
+            }
+
+            var guidBefore = AssetDatabase.AssetPathToGUID(profilePath);
+            var result = ApaProfileWriter.Save(draft, profilePath, true);
+            _validation = result.Issues;
+            _health = result.Succeeded && !result.Issues.HasErrors
+                ? ApaInstallerHealth.Ready
+                : ApaInstallerHealth.Problem;
+            _healthDetail = string.Empty;
+            _validatedSignature = string.Empty;
+
+            if (!result.Succeeded)
+            {
+                _status = result.Message;
+                return;
+            }
+
+            AssetDatabase.ImportAsset(profilePath);
+            serializedObject.Update();
+            Repaint();
+
+            // The in-place update is the whole reason a rebuild is safe for the prefabs that reference the
+            // profile, so it is verified instead of assumed: a GUID that changed means the writer replaced the
+            // asset rather than updating it, and every reference to the old asset is now dangling.
+            var guidAfter = AssetDatabase.AssetPathToGUID(profilePath);
+            if (!string.Equals(guidBefore, guidAfter, StringComparison.Ordinal))
+            {
+                _status = TrFormat(
+                    "The profile at '{0}' was rewritten, but its asset GUID changed ({1} to {2}), so prefabs " +
+                    "that referenced it no longer do. Undo this change and re-author the profile instead of " +
+                    "rebuilding it.",
+                    profilePath, guidBefore, guidAfter);
+                return;
+            }
+
+            _status = TrFormat(
+                "Rebuilt '{0}': target signature, part mesh fingerprint, and armature selections recaptured; " +
+                "stable part id and authored removal, seam, and material policies kept.",
+                profilePath);
         }
 
         /// <summary>

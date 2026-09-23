@@ -167,11 +167,17 @@ namespace AvatarPartAssembler.Editor.Authoring
                 issues);
             if (partSnapshot == null) return new ApaAuthoringContextResult(null, ValidationResult.Build(issues));
 
+            // The vendor compatibility mode is decided by the same detection the build uses, so a dry run and a
+            // build reach the same verdict about a hierarchy Marshmallow PB has already wrapped. The authoring
+            // scene normally carries only the plugin's setup component and no wrapper, which makes the mode inert
+            // there; a scene that has already been processed (a baked avatar, an NDMF preview clone) carries the
+            // wrapper, and refusing it here would make the window disagree with the build it is predicting.
             var context = new ValidationContext(
                 baseSnapshot,
                 ValidationContext.SortParts(new List<PartSnapshot> { partSnapshot }),
                 policy,
-                profile.Compatibility);
+                profile.Compatibility,
+                marshmallowPbCompatibilityEnabled: ContextBuilder.HasMarshmallowPb(avatarRoot));
 
             return new ApaAuthoringContextResult(context, ValidationResult.Build(issues));
         }
