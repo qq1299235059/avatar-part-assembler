@@ -63,6 +63,8 @@ The release workflow:
 
 Maintainers should review pinned action SHAs before updating them.
 
+Releases are now triggered only by version tags whose name must exactly match `package.json` (for example `v0.5.4` for package version `0.5.4`). The previous workflow allowed ordinary `main` pushes to republish an existing version, and `v0.5.3` assets were in fact replaced after the original tag was created. Treat the `v0.5.3` Git tag as the source reference and do not treat its current Release assets as a reproducible byte-for-byte build of that tag. Future releases should use a new version rather than mutating an existing version's assets.
+
 ## Secrets and credentials
 
 Do not commit:
