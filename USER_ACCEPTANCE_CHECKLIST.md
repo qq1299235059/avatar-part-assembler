@@ -9,8 +9,6 @@ run and recorded is still not a pass, and end-to-end VRChat upload has not yet b
 
 - Package version under test: **`0.3.0-rc.6`** (`Packages/dev.avatar-part-assembler/package.json`)
 - Profile schema version under test: **5** (`ApaPartProfile.CurrentSchemaVersion`)
-- Project: `C:\\编辑中工程\\niu11`
-- Project: `C:\编辑中工程\niu11`
 - Expected environment: Unity **2022.3.22f1**, VRChat SDK Avatars **3.10.4**,
   NDMF **1.14.0**, Modular Avatar **1.18.0-beta.0**
 - Harness that wrote this file: documentation session in an isolated copy
@@ -48,7 +46,7 @@ Legend for the Result column: `pass` / `fail` / `blocked` / `not run`.
 
 | # | Check | Exact steps | Pass criteria | Result |
 | --- | --- | --- | --- | --- |
-| 1.1 | Editor compile | Open `C:\编辑中工程\niu11` in Unity 2022.3.22f1 and wait for the domain reload. | Console shows **zero errors and zero warnings** from `dev.avatar-part-assembler.*`. | |
+| 1.1 | Editor compile | Open the Unity project containing this package in Unity 2022.3.22f1 and wait for the domain reload. | Console shows **zero errors and zero warnings** from `dev.avatar-part-assembler.*`. | |
 | 1.2 | Assembly load | In the Console, confirm no "The type or namespace name … could not be found", no "Assembly … will not be loaded", and no asmdef cycle error. | All five package assemblies load: `runtime`, `editor`, `editor.ndmf`, `editor.preview`, `tests.editor`. | |
 | 1.3 | Nested editor assemblies present | Confirm the types are visible: `ApaAssemblyPass` and `ApaPreviewRegistration` resolve, and the NDMF pass list is populated. | The NDMF pass registered by this package appears in the NDMF plugin/pass listing. | |
 | 1.4 | Test assembly visible | Add `"dev.avatar-part-assembler"` to `testables` in `Packages/manifest.json`, then re-open the Test Runner. | `AvatarPartAssembler.Tests` appears under EditMode. | |
