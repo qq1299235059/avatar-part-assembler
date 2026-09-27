@@ -17,7 +17,7 @@ pass, and end-to-end VRChat upload remains an explicit acceptance item.
   identity, automatic signature capture, and `APA042`/`APA043`/`APA044`. The facts this file once
   listed as
   unresolved have since been reconciled against the frozen package — see
-  [Facts reconciled against the frozen package](#facts-reconciled-against-the-frozen-package).
+  [historical reconciliation notes](#historical-facts-reconciled-against-earlier-package-milestones).
   Every behavioural claim is still **unobserved until you run the row**.
 
 Legend for the Result column: `pass` / `fail` / `blocked` / `not run`.
@@ -28,7 +28,7 @@ Legend for the Result column: `pass` / `fail` / `blocked` / `not run`.
 
 | # | Step | Why |
 | --- | --- | --- |
-| 0.1 | Read `README.md` → "Release-candidate status" and "Known limitations and honest gaps". | The limitations are acceptance-relevant; several checks below exist precisely because a limitation is expected, not because a bug is suspected. |
+| 0.1 | Read `README.md` → the pre-1.0 status notice and "重要边界与已知限制". | The limitations are acceptance-relevant; several checks below exist precisely because a limitation is expected, not because a bug is suspected. |
 | 0.2 | Copy `Packages/dev.avatar-part-assembler/**` into a branch or a backup folder. | The checks include builds and an upload. The package is non-destructive by design, but an acceptance run should never be the first thing that has no way back. |
 | 0.3 | Confirm the versions in `Packages/manifest.json` / `Packages/packages-lock.json` match the expected environment above. | A different NDMF or Modular Avatar version invalidates the API attribution this release was reviewed against. |
 | 0.4 | Keep the Unity Console visible with **Clear on Play** off and **Error Pause** off. | A row that hides Console output cannot be judged. |
