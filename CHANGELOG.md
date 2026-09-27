@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — editor-only installer, build cleanup, and preview compatibility with Modular Avatar's mesh stages
+## [0.5.3] — Play Mode assembly, editor-only installer, and Modular Avatar preview compatibility
 
 - **Play Mode assembles again: the activity predicate no longer reads Unity's activation bookkeeping.**
   `AvatarPartInstaller.IsActiveForBuild` delegated to `Behaviour.isActiveAndEnabled`, which is *not* the same
@@ -47,7 +47,7 @@
   helper tests `component is VRC.SDKBase.IEditorOnly` first. The component now implements
   `nadena.dev.ndmf.INDMFEditorOnly`, NDMF's runtime compatibility interface, which compiles to a
   `VRC.SDKBase.IEditorOnly` derivative whenever the VRChat SDK is present; the runtime asmdef gains exactly one
-  reference (`nadena.dev.ndmf.runtime`) and the package version stays `0.5.2`. The **GameObject is never tagged
+  reference (`nadena.dev.ndmf.runtime`). The **GameObject is never tagged
   `EditorOnly`** — that tag would delete the part's bones, children and prefab-instance data in NDMF's
   `RemoveEditorOnlyPass` and in the SDK's own strip — and nothing else about the component changes, so preview
   discovery, the assembly pass, protected-mesh hydration, the Play Mode prebuild and every serialized field are
@@ -1424,5 +1424,4 @@ NDMF build integration follow in later milestones.
 - Skinned and blend-shaped input is blocked with `APA014` rather than assembled. This is
   the intended M1 behaviour, not a defect.
 - `APA007`, `APA008`, and `APA011` are allocated for M2 and are not produced by M1.
-
 
