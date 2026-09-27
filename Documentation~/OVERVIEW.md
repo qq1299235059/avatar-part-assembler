@@ -22,7 +22,7 @@ authoring asset.
 
 ## Release-candidate status
 
-**This is package version `0.4.0`. It is not a 1.0 release and the full acceptance checklist
+**This is package version `0.5.3`. It is not a 1.0 release and the full acceptance checklist
 is still incomplete.**
 
 The core build path has now been exercised in Unity 2022.3.22f1 rather than only reviewed
@@ -114,7 +114,7 @@ whether the Test Runner can see and run it.
 
 ## Play Mode and Gesture Manager
 
-`0.4.0` enables Play Mode compatibility by default. When a loaded scene contains an
+`0.5.3` keeps Play Mode compatibility enabled by default. When a loaded scene contains an
 `AvatarPartInstaller`, APA temporarily enables NDMF's official **Apply On Play** setting before
 entering Play Mode.
 
@@ -1040,10 +1040,13 @@ assembled.
 up to the next AES block, which is exactly what PKCS#7 produces — so the reader can never
 refuse a payload this build itself wrote.
 
-The payload protects the **distribution format** and detects tampering. It is not an
-unextractable DRM boundary: the derivation secret ships inside the package, and a build
-that runs in the Editor can be observed while it runs. The creator guide says so in the
-same words.
+The payload protects the **distribution format** and detects accidental corruption or
+modifications whose authentication tag was not recomputed. It is **not an anti-tamper or
+authenticity boundary against a determined recipient**: the derivation material ships
+inside the package, so a recipient who can inspect the plugin can reproduce the key
+derivation and construct a payload with a valid authentication tag. It is also not an
+unextractable DRM boundary, because a build that runs in the Editor can be observed while
+it runs. See `SECURITY.md` for the explicit threat model.
 
 ### Data flow
 
@@ -1080,7 +1083,7 @@ same words.
 
 | Condition | Diagnostic |
 | --- | --- |
-| Missing, truncated, tampered, wrong-part, unsupported version/codec, bad padding, trailing bytes, out-of-range counts | Blocking `APA053 PROTECTED_MESH_INVALID` with a stable `reason=` token (`protected-mesh-missing`, `authentication-failed`, `part-id-mismatch`, `unsupported-format-version`, `unsupported-codec`, `invalid-padding`, `truncated-payload`, `trailing-garbage`, …) |
+| Missing, truncated, authentication-failed, wrong-part, unsupported version/codec, bad padding, trailing bytes, out-of-range counts | Blocking `APA053 PROTECTED_MESH_INVALID` with a stable `reason=` token (`protected-mesh-missing`, `authentication-failed`, `part-id-mismatch`, `unsupported-format-version`, `unsupported-codec`, `invalid-padding`, `truncated-payload`, `trailing-garbage`, …) |
 | The written prefab would still depend on the source mesh or its model file | Blocking `APA054 PROTECTED_MESH_SOURCE_LEAK` (`reason=source-mesh-reference` before the save, `reason=source-mesh-dependency` after it) |
 | An ordinary part renderer with no mesh and no payload | Blocking `APA006 TARGET_RENDERER_NOT_FOUND` with `reason=missing-part-mesh` and an actionable message |
 | Payload intact but no longer matching the profile | `APA048` (the profile fingerprint mismatch), not `APA053`: the remedy is to recapture the profile |
@@ -1212,7 +1215,7 @@ Two version numbers, never conflated:
 | Version | Meaning | Current value |
 | --- | --- | --- |
 | `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **5** (`ApaPartProfile.CurrentSchemaVersion`) |
-| Package version in `package.json` | The shipped build | **0.4.0** |
+| Package version in `package.json` | The shipped build | **0.5.3** |
 
 Migration policy:
 
@@ -1221,11 +1224,11 @@ Migration policy:
 | 1 | 2 | **Refused.** Version 1 stored removal as flat triangle indices with no submesh component and omitted the topology, frame-count, and bone data needed to verify what it references. Neither can be reconstructed without guessing, so the profile must be re-authored |
 | 2 | 3 | **Accepted as a no-op.** Version 3 adds `ConflictPriority`, `SlotMode`, and the serialized merge-name policy (`MergePrefix`, `MergeSuffix`, `InferMergeNames`). Every one of them defaults to the version-2 behaviour, so a version-2 profile means exactly the same thing under this build |
 | 3 | 4 | **Accepted as a no-op.** Version 4 adds the two armature paths and the seam pairing version. A version-3 profile still loads and is still not rewritten — but it is **refused at build time** by `APA043` (no armature selected) and `APA042` (the seam has no pairing) until it is re-authored |
-| 3 → older build | — | Blocks with `APA015 UNKNOWN_PROFILE_SCHEMA`, the fail-closed direction: an older build cannot honour a declared policy it does not understand |
-| 4 → a pre-M10 build | — | Blocks with `APA015` |
-| newer than 4 | — | Blocks with `APA015` |
+| 4 | 5 | **Accepted as a no-op read, then refused until recaptured.** Version 5 adds deterministic target- and part-mesh content fingerprints. A version-4 profile remains readable and is not rewritten, but compatibility validation requires the author to capture the current meshes before build |
+| 4 → a pre-schema-5 build | — | A schema-5 profile blocks with `APA015`; older builds cannot safely ignore the fingerprint contract |
+| newer than 5 | — | Blocks with `APA015` |
 
-`TryMigrate` deliberately **writes nothing**, even for the 2 → 3 and 3 → 4 accepts. The
+`TryMigrate` deliberately **writes nothing**, including the 2 → 3, 3 → 4, and 4 → 5 readable transitions. The
 pipeline may be reading a `ScriptableObject` shared with the authoring scene, and rewriting a
 version number on read is a hidden, non-undoable mutation of the author's asset. The
 `MinimumMigratableSchemaVersion` is 2.
@@ -1531,8 +1534,7 @@ observation of them (checklist 6.7) is still open.
 
 ### Release-candidate versioning
 
-`0.4.0` is a **release candidate**. It is not a 1.0 release, so no VPM
-resolution will treat it as the stable `0.3.0`. The version will move to `1.0.0` only
+`0.5.3` is a **pre-1.0 release** with the full acceptance checklist still open. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
 no document, changelog entry, or commit message in this package may describe the
 package as stable, tested, or user-accepted.
