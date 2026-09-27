@@ -73,17 +73,12 @@ APA 的四个核心原则：
 
 ## 安装
 
-### 推荐：固定版本 Release
+### 推荐：固定 Git Tag
 
-当前 Release：[`v0.5.3`](https://github.com/qq1299235059/avatar-part-assembler/releases/tag/v0.5.3)
+对于可复现安装，当前建议直接固定到 Git tag `v0.5.3`，而不是长期跟随 `main`。
 
-Release 自动提供：
-
-- `dev.avatar-part-assembler-0.5.3.unitypackage`
-- `dev.avatar-part-assembler-0.5.3.zip`
-- `package.json`
-
-对于普通 Avatar 工程，建议优先使用固定版本，而不是长期跟随 `main`。
+> [!WARNING]
+> 旧版发布 workflow 曾允许同一版本号在后续 `main` 提交时重复上传 Release 资产，因此当前 `v0.5.3` 的 GitHub Release 资产不应被当作“与 tag 内容逐字节对应”的可复现基准。发布流程已经修复为只允许版本 tag 触发；下一个版本开始应恢复严格的 tag → source → artifact 对应关系。
 
 ### Unity Package Manager / Git URL
 
