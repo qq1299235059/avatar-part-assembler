@@ -1,13 +1,12 @@
-# User acceptance checklist — 0.3.0-rc.6 release candidate
+# User acceptance checklist — 0.5.3 pre-1.0
 
-**Status: partially exercised; full acceptance remains open.** The package has now compiled
-against Unity 2022.3.22f1's real Bee/Roslyn references and a real NDMF `AvatarProcessor`
-build has completed successfully on the project test avatar. That run replaced the target
-mesh, consumed the APA part renderer/installer, and verified the post-Modular-Avatar armature
-path. The rows below are still the authoritative full acceptance plan: any row not explicitly
-run and recorded is still not a pass, and end-to-end VRChat upload has not yet been accepted.
+**Status: full acceptance remains open for 0.5.3.** Earlier milestones recorded successful
+compile and NDMF processor observations, but those historical observations are not automatically
+promoted to passes for the current package. The rows below are the authoritative acceptance
+plan for 0.5.3: any row not explicitly run and recorded against this version is still not a
+pass, and end-to-end VRChat upload remains an explicit acceptance item.
 
-- Package version under test: **`0.3.0-rc.6`** (`Packages/dev.avatar-part-assembler/package.json`)
+- Package version under test: **`0.5.3`** (`package.json`)
 - Profile schema version under test: **5** (`ApaPartProfile.CurrentSchemaVersion`)
 - Expected environment: Unity **2022.3.22f1**, VRChat SDK Avatars **3.10.4**,
   NDMF **1.14.0**, Modular Avatar **1.18.0-beta.0**
@@ -149,17 +148,17 @@ Prerequisite: 1.1 passes. Use a body with at least one part prefab and an
 
 ---
 
-## 7. Schema migration gate (v2/v3 → v4)
+## 7. Schema migration gate (v2/v3/v4 → v5)
 
 | # | Check | Exact steps | Pass criteria | Result |
 | --- | --- | --- | --- | --- |
-| 7.1 | New profile is v4 | Create a profile through `Tools/Avatar Part Assembler/Part Authoring` → `Save Profile Asset`. | The asset's `SchemaVersion` reads **4**. | |
-| 7.2 | Schema-2 profile accepted, not rewritten, then refused at build | Load a profile authored before this release (schema 2), then run `Validate` and a build. | It loads, its serialized `SchemaVersion` is still **2** (a read that rewrites the author's asset is a defect, not a convenience), and it keeps its old behaviour (`SlotMode = Replace`, `ConflictPriority = 0`). The build then refuses it with `APA043 ARMATURE_SELECTION_INVALID` (no armature selected) and `APA042 SEAM_PAIRING_REQUIRED reason=seam-pairing-required` (unordered seam) until it is re-authored. | |
-| 7.3 | Schema-3 profile accepted, not rewritten, then refused at build | Load a v3 profile (the previous release's output), check the asset's serialized `SchemaVersion`, then run `Validate` and a build. | Still **3**: loading it neither rewrites nor silently upgrades it. The build then refuses it with `APA043 ARMATURE_SELECTION_INVALID` (no armature selected) and `APA042 SEAM_PAIRING_REQUIRED reason=seam-pairing-required` (unordered seam); it validates only after both armatures are selected and the seam is regenerated. | |
-| 7.4 | Schema-1 profile rejected | Load a schema-1 profile (or hand-edit `_schemaVersion: 1`). | Blocked with the migration refusal message; the profile must be re-authored. It must not be guessed at. | |
-| 7.5 | Newer schema rejected | Hand-edit `_schemaVersion` to a value above **4**. | Blocked with `APA015 UNKNOWN_PROFILE_SCHEMA`. | |
-| 7.6 | Policy and legacy fields round-trip | Set `SlotMode`, `ConflictPriority`, `AllowPartOnlyShapes`, the two armature selections (the target armature path and the part armature path), and the legacy `MergePrefix`, `MergeSuffix`, `InferMergeNames` fields, save, close, reopen. | Every value round-trips; nothing resets to a default. The two armature paths and the three legacy merge fields all serialize: the armature paths are what the build reads, while `MergePrefix`/`MergeSuffix`/`InferMergeNames` are round-trip-only — stored and restored, no longer read by the build and no longer shown in the window. | |
-| 7.7 | Older build sees v4 | (If you have a pre-M10 build available) open a v4 profile with it. | It blocks with `APA015` rather than silently ignoring a profile it cannot read. | |
+| 7.1 | New profile is v5 | Create a profile through `Tools/Avatar Part Assembler/Part Authoring` → `Save Profile Asset`. | The asset's `SchemaVersion` reads **5** and both target/part mesh fingerprints are captured. | |
+| 7.2 | Schema-2 profile remains readable but is not silently rewritten | Load a schema-2 profile, then run `Validate`. | Its serialized `SchemaVersion` remains **2**. Missing armature/seam/fingerprint information is reported and must be re-authored; loading alone does not mutate the asset. | |
+| 7.3 | Schema-3 profile remains readable but is not silently rewritten | Load a schema-3 profile, then run `Validate`. | Its serialized `SchemaVersion` remains **3**. Missing explicit armature/seam/fingerprint information blocks until the author supplies it. | |
+| 7.4 | Schema-4 profile requires fingerprint recapture | Load a schema-4 profile and run `Validate`. | It remains serialized as **4** and is refused until the current target and part mesh fingerprints are captured for schema-5 compatibility. | |
+| 7.5 | Schema-1 profile rejected | Load a schema-1 profile (or hand-edit `_schemaVersion: 1`). | Blocked with the migration refusal message; the profile must be re-authored. | |
+| 7.6 | Newer schema rejected | Hand-edit `_schemaVersion` to a value above **5**. | Blocked with `APA015 UNKNOWN_PROFILE_SCHEMA`. | |
+| 7.7 | Legacy fields round-trip without becoming active policy | Save and reopen a readable legacy profile after authoring required current fields. | Serialized legacy fields round-trip where supported, but current build behaviour is controlled by the explicit armature/seam/fingerprint contracts rather than legacy inference. | |
 
 ---
 
@@ -326,12 +325,12 @@ VRChat SDK: ____________
 
 ---
 
-## Facts reconciled against the frozen package
+## Historical facts reconciled against earlier package milestones
 
-This checklist originated in an isolated documentation copy while the M7 code integration ran
-elsewhere. The statements below were later reconciled against the package and remain useful
-for the current `0.3.0-rc.6` candidate; where runtime validation has since occurred, the
-newer status at the top of this file takes precedence.
+The statements below record earlier milestone reconciliation work. They are historical context,
+not acceptance evidence for 0.5.3. Where they conflict with the current source, package version,
+schema, or the status at the top of this file, the current source and the top-level 0.5.3 status
+take precedence.
 
 1. **Assembly references.** The asmdefs are wired: `dev.avatar-part-assembler.editor.ndmf`
    references `dev.avatar-part-assembler.editor.preview`, and the Tests asmdef references
@@ -342,8 +341,8 @@ newer status at the top of this file takes precedence.
 2. **Preview registration.** The registration is wired in `ApaNdmfPlugin.Configure`:
    `seq.Run(ApaAssemblyPass.Instance).PreviewingWith(ApaPreviewRegistration.CreateFilter())`
    on the real Transforming pass. `PreviewStaticContractTests` locks the statement in
-3. **Version string.** `package.json` now reads **`0.3.0-rc.6`**, matching this document and
-   the README.
+3. **Version string.** The current `package.json` reads **`0.5.3`**. Earlier version-string
+   reconciliation notes are retained here only as historical context.
 4. **Test count.** The suite is part of this release candidate. No count is quoted in
    prose anywhere; check 2.3 compares the executed count against the `[Test]` methods in
    the sources you actually have.
