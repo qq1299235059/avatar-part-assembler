@@ -11,17 +11,11 @@ run and recorded is still not a pass, and end-to-end VRChat upload has not yet b
 - Profile schema version under test: **5** (`ApaPartProfile.CurrentSchemaVersion`)
 - Expected environment: Unity **2022.3.22f1**, VRChat SDK Avatars **3.10.4**,
   NDMF **1.14.0**, Modular Avatar **1.18.0-beta.0**
-- Harness that wrote this file: documentation session in an isolated copy
-  (`work/.../isolated/m7docs`); the code session (`runs/07-m7-integration`) owns the
-  package sources, `runs/10-m8-zh-cn-localization` added group 10 (language) and the
-  localization layer, `runs/11-m9-mask-selection` added group 11 (the black/white
-  texture-mask removal selection) and its `APA041`, and `runs/12-m9-review-fixes` repaired
-  the seven defects a source review found in that milestone (readback path, format refusal,
-  wrap addressing, per-triangle allocation, Apply Mode labels, blocker wording, and the
-  duplicated failure enum value) and revised group 11 accordingly;
-  `runs/13-m10-authoring-simplification` added group 12 (explicit armature selections,
-  world-position seam generation, weighted-bone identity, automatic signature capture, and
-  the collapsed address list) and its `APA042`/`APA043`/`APA044`. The facts this file once
+- This checklist was expanded across the integration, localization, mask-selection,
+  review-fix, and authoring-simplification milestones. Group 10 covers language support,
+  group 11 covers black/white texture-mask removal selection and `APA041`, and group 12
+  covers explicit armature selection, world-position seam generation, weighted-bone
+  identity, automatic signature capture, and `APA042`/`APA043`/`APA044`. The facts this file once
   listed as
   unresolved have since been reconciled against the frozen package — see
   [Facts reconciled against the frozen package](#facts-reconciled-against-the-frozen-package).
@@ -251,8 +245,7 @@ judges a mask by its pixel format.
 
 ## 12. Armature selection, world-position seams, and authoring ergonomics (M10)
 
-Added with `runs/13-m10-authoring-simplification`. These are the manual observations for
-M10: two explicit armature selections replaced every bone name and path heuristic, bone
+These are the manual observations for M10: two explicit armature selections replaced every bone name and path heuristic, bone
 identity is now the bone path relative to its own selected armature, the seam is generated
 from world positions and stored as explicit pairs, an uncaptured compatibility signature is
 captured automatically on first use, and the removal address list is collapsed. A profile
