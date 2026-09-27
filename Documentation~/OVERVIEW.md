@@ -20,18 +20,17 @@ authoring asset.
 
 ---
 
-## Release-candidate status
+## Pre-1.0 status
 
 **This is package version `0.5.3`. It is not a 1.0 release and the full acceptance checklist
 is still incomplete.**
 
-The core build path has now been exercised in Unity 2022.3.22f1 rather than only reviewed
-statically. A real NDMF `AvatarProcessor` run completed successfully on the project test
-avatar: the target body mesh was replaced by the assembled mesh, the installer/part renderer
-were consumed, matching part bones were redirected to body bones, and the resulting build
-reported only informational seam/UV/bone diagnostics. The same source was also compiled
-against Unity's actual Bee/Roslyn response files for the Editor, NDMF, Preview, and Editor
-Test assemblies.
+Earlier milestones exercised the core build path in Unity 2022.3.22f1 and completed a real
+NDMF `AvatarProcessor` run on a test avatar: the target body mesh was replaced, the APA part
+renderer/installer were consumed, and matching part bones were redirected to body bones.
+Those observations are historical validation evidence, not an automatic acceptance pass for
+0.5.3. The current release still requires the checklist rows to be rerun and recorded where
+0.5.3-specific acceptance is required.
 
 The complete user verification plan is still in
 [`USER_ACCEPTANCE_CHECKLIST.md`](USER_ACCEPTANCE_CHECKLIST.md). Preview rendering, broader
@@ -1532,7 +1531,7 @@ is skinned, where the stored paths are a staleness signal rather than a remap in
 sides are implemented in `Editor/Validation/Rules/CompatibilityRule.cs`; only the runtime
 observation of them (checklist 6.7) is still open.
 
-### Release-candidate versioning
+### Pre-1.0 versioning
 
 `0.5.3` is a **pre-1.0 release** with the full acceptance checklist still open. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
