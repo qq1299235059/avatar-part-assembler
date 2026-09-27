@@ -1,28 +1,18 @@
-# Avatar Part Assembler 中文文档
+# Avatar Part Assembler 中文入口
 
-这是 Avatar Part Assembler 的简体中文入口文档。
+Avatar Part Assembler（APA）的主要项目说明现在统一维护在 [`README.md`](README.md)。
 
-## 使用者
+当前版本：`0.5.3` · Unity `2022.3`。
 
-安装插件后，把部件作者提供的 `.prefab` 拖到 Avatar 根对象下即可。预制体根节点上的
-`AvatarPartInstaller` 会读取部件 Profile，并在 NDMF 预览、Play Mode/Gesture Manager 和上传构建中使用同一套装配流程。
-删除预制体即可卸载；APA 不会把网格永久写回 Avatar。
+## 文档导航
 
-## 部件作者
-
-请按完整的[部件制作指南](Documentation~/PART_AUTHORING_GUIDE.zh-CN.md)操作。指南包含：
-
-- 需要创作和发布的网格、材质、顶点色、Profile、预制体、遮罩和动画资产；
-- 从参考 Avatar、模型导入、部件编辑器到保存 Profile/生成普通预制体的逐步流程；
-- 接缝顶点色、世界坐标配对、UV 语义、骨骼权重、目标骨架权威和形态键的强制约束；
-- Modular Avatar Merge Animator 动画重定向与空源对象清理的验证方法；
-- 发布前清单和常见 `APAxxx` 诊断的处理方向。
-
-## 技术文档
-
-- [英文技术总览](Documentation~/OVERVIEW.md)
+- [项目介绍、安装、快速使用与功能边界](README.md)
+- [部件制作指南](Documentation~/PART_AUTHORING_GUIDE.zh-CN.md)
+- [技术总览 / 架构与诊断注册表](Documentation~/OVERVIEW.md)
 - [变更历史](CHANGELOG.md)
 - [人工验收清单](USER_ACCEPTANCE_CHECKLIST.md)
 - [许可证](LICENSE.md)
 
-当前版本：`0.4.0`，Unity `2022.3`。
+如果你只是安装别人制作好的 APA 部件，从 [`README.md`](README.md) 的“Avatar 使用者：安装一个部件”开始即可。
+
+如果你要制作并发布部件，请直接阅读[部件制作指南](Documentation~/PART_AUTHORING_GUIDE.zh-CN.md)。
