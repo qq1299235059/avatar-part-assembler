@@ -227,6 +227,24 @@ namespace AvatarPartAssembler.Editor.Ndmf
     /// This is deliberately earlier than Gesture Manager / avatar emulator initialization and earlier than
     /// VRCFury's own Play Mode scene processor (int.MinValue + 100).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Every refusal is reported.</b> The callback used to answer "should I run?" with a chain of silent early
+    /// returns, so a Play Mode entry that assembled nothing left no trace: a reader could not tell "the callback
+    /// never ran" apart from "the callback ran and every installer was parked", and a regression in this path
+    /// could only be found by reading the source. The decision now comes from
+    /// <see cref="ApaPlayModePrebuildGate"/> and every outcome that means "this scene has APA parts and they will
+    /// not be assembled early" writes one warning naming the reason token. The two genuinely uninteresting
+    /// outcomes — a player build's scene processing, and a scene with no APA part — stay silent.
+    /// </para>
+    /// <para>
+    /// <b>The scene walk is the observation walk, the root walk is the build walk.</b> The scene is searched with
+    /// <c>GetComponentsInChildren&lt;AvatarPartInstaller&gt;(true)</c> so that a scene whose parts are all parked
+    /// can still say so, and the avatar root is then taken from the installers that are active for build — the
+    /// same predicate the build itself applies, so a parked part neither triggers a build here nor contributes to
+    /// one there.
+    /// </para>
+    /// </remarks>
     internal sealed class ApaPlayModeScenePrebuild : IProcessSceneWithReport
     {
         public int callbackOrder => int.MinValue + 50;
@@ -236,22 +254,63 @@ namespace AvatarPartAssembler.Editor.Ndmf
             // Unity can invoke IProcessSceneWithReport while the temporary Play Mode scene is still being loaded,
             // before Application.isPlaying flips true. The editor transition flag is the reliable gate here;
             // otherwise the early prebuild is skipped and Apply On Play falls back to Awake, after an emulator may
-            // already have posed the bones.
-            if (!EditorApplication.isPlayingOrWillChangePlaymode) return;
-            if (!ApaPlayModeCompatibility.IsEnabled) return;
-            if (!Config.ApplyOnPlay) return;
+            // already have posed the bones. A player build processes scenes through this same callback, so the
+            // flag also keeps the build's scene walk out of this package's hands.
+            var isPlayModeTransition = EditorApplication.isPlayingOrWillChangePlaymode;
+            if (!isPlayModeTransition) return;
             if (!scene.IsValid() || !scene.isLoaded || EditorSceneManager.IsPreviewScene(scene)) return;
 
-            var avatarRoots = CollectApaAvatarRoots(scene);
+            var installers = CollectSceneInstallers(scene);
+            if (installers.Count == 0) return;
+
+            var avatarRoots = CollectApaAvatarRoots(installers);
+            var decision = ApaPlayModePrebuildGate.Decide(
+                isPlayModeTransition: isPlayModeTransition,
+                featureEnabled: ApaPlayModeCompatibility.IsEnabled,
+                applyOnPlay: Config.ApplyOnPlay,
+                installerCount: installers.Count,
+                avatarRootCount: avatarRoots.Count);
+
+            if (decision != ApaPlayModePrebuildDecision.Run)
+            {
+                Debug.LogWarning(
+                    "[Avatar Part Assembler] Play Mode scene prebuild skipped for scene '" + scene.name + "' (" +
+                    ApaPlayModePrebuildGate.Describe(decision) + "; installers=" + installers.Count +
+                    "; avatarRoots=" + avatarRoots.Count + "). The avatar will only be processed by NDMF's Apply " +
+                    "On Play fallback, which runs at Awake — after the scene has been activated and after an " +
+                    "avatar emulator may already have posed the armature. " +
+                    DescribeRemedy(decision));
+                return;
+            }
+
             for (var i = 0; i < avatarRoots.Count; i++)
             {
                 PreprocessAvatarBeforeAwake(avatarRoots[i]);
             }
         }
 
-        private static List<GameObject> CollectApaAvatarRoots(Scene scene)
+        /// <summary>The one action that clears a non-running decision, for the skip warning.</summary>
+        private static string DescribeRemedy(ApaPlayModePrebuildDecision decision)
         {
-            var result = new List<GameObject>();
+            switch (decision)
+            {
+                case ApaPlayModePrebuildDecision.FeatureDisabled:
+                    return "Re-enable Tools > Avatar Part Assembler > Play Mode + Gesture Manager Compatibility.";
+                case ApaPlayModePrebuildDecision.ApplyOnPlayOff:
+                    return "Turn NDMF's Apply On Play setting back on, or re-enter Play Mode so this package can " +
+                           "arm it for the session.";
+                case ApaPlayModePrebuildDecision.NoActiveInstaller:
+                    return "Every installer in the scene is parked: enable the component, activate its GameObject, " +
+                           "and set EnabledForBuild to have the part installed.";
+                default:
+                    return "No action is needed for a player build or a scene without an APA part.";
+            }
+        }
+
+        /// <summary>Every installer in the scene, parked ones included, in scene-root order.</summary>
+        private static List<AvatarPartInstaller> CollectSceneInstallers(Scene scene)
+        {
+            var result = new List<AvatarPartInstaller>();
             var sceneRoots = scene.GetRootGameObjects();
 
             for (var rootIndex = 0; rootIndex < sceneRoots.Length; rootIndex++)
@@ -259,13 +318,26 @@ namespace AvatarPartAssembler.Editor.Ndmf
                 var installers = sceneRoots[rootIndex].GetComponentsInChildren<AvatarPartInstaller>(true);
                 for (var installerIndex = 0; installerIndex < installers.Length; installerIndex++)
                 {
-                    var installer = installers[installerIndex];
-                    if (installer == null || !installer.IsActiveForBuild) continue;
-
-                    var avatarRoot = FindNearestAvatarRoot(installer.transform);
-                    if (avatarRoot == null || result.Contains(avatarRoot)) continue;
-                    result.Add(avatarRoot);
+                    if (installers[installerIndex] != null) result.Add(installers[installerIndex]);
                 }
+            }
+
+            return result;
+        }
+
+        /// <summary>The avatar roots an active installer belongs to, in discovery order and without duplicates.</summary>
+        private static List<GameObject> CollectApaAvatarRoots(List<AvatarPartInstaller> installers)
+        {
+            var result = new List<GameObject>();
+
+            for (var installerIndex = 0; installerIndex < installers.Count; installerIndex++)
+            {
+                var installer = installers[installerIndex];
+                if (installer == null || !installer.IsActiveForBuild) continue;
+
+                var avatarRoot = FindNearestAvatarRoot(installer.transform);
+                if (avatarRoot == null || result.Contains(avatarRoot)) continue;
+                result.Add(avatarRoot);
             }
 
             return result;
@@ -284,6 +356,11 @@ namespace AvatarPartAssembler.Editor.Ndmf
         private static void PreprocessAvatarBeforeAwake(GameObject avatarRoot)
         {
             if (avatarRoot == null) return;
+
+            // Defensive re-check: the gate above only hands over a root reached from an installer that is active
+            // for build, so this can only fire if the hierarchy changed between the two walks. It is kept because
+            // the alternative — handing an avatar with no active part to a full NDMF build — is worse than a
+            // no-op.
             if (ContextBuilder.CollectInstallers(avatarRoot).Count == 0) return;
 
             var avatarName = avatarRoot.name;
@@ -324,3 +401,4 @@ namespace AvatarPartAssembler.Editor.Ndmf
         }
     }
 }
+
