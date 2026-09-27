@@ -143,11 +143,18 @@ namespace AvatarPartAssembler.Editor.Preview
                         "the render group carried no APA preview request"));
                 }
 
+                // The proxy pairs are the whole reason the preview can show what the avatar will look like: NDMF
+                // runs this filter after Modular Avatar's, so the proxy it hands in already carries their result
+                // (a Mesh Cutter's cut mesh, a Material Setter's swap, a Shape Changer's weights). The source
+                // records those pairs once and every later read goes through it, falling back to the live renderer
+                // when a pair is missing or its proxy is gone.
+                var captureSource = ApaPreviewCaptureSource.FromProxyPairs(proxyPairs);
+
                 // The node's own observations are registered on the controller's context: this is the context whose
                 // invalidation reaches the pipeline, so a change to any input re-discovers the target set.
                 ApaPreviewInputObserver.Observe(context, request.AvatarRoot, request.AllInstallers, request.TargetRenderer);
 
-                return Task.FromResult(ApaPreviewNode.Create(request));
+                return Task.FromResult(ApaPreviewNode.Create(request, captureSource));
             }
             catch (Exception e)
             {

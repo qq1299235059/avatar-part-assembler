@@ -85,6 +85,26 @@ namespace AvatarPartAssembler.Editor.Preview
         private readonly ApaPreviewRequest _request;
 
         /// <summary>
+        /// The proxy every read of the frame's renderer state goes through: materials and blend-shape weights are
+        /// read from the proxy NDMF hands this node, not from the author's renderer.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// NDMF runs this node after Modular Avatar's preview nodes and resets every proxy from the original at
+        /// the start of each frame, so at this node's turn the proxy carries exactly what those stages wrote: a
+        /// Mesh Cutter's cut mesh, a Material Setter's material list, a Shape Changer's blend-shape weights.
+        /// Reading the original instead would overwrite all three with the author's unmodified state — the defect
+        /// this map exists to remove.
+        /// </para>
+        /// <para>
+        /// It is re-recorded on every frame (the pairs are cheap dictionary writes) and rebuilt on every refresh,
+        /// because NDMF may hand a replacement controller different proxy objects. A pair that is missing, or a
+        /// proxy that has been destroyed, reads as "unknown" and the live renderer answers instead.
+        /// </para>
+        /// </remarks>
+        private readonly ApaPreviewCaptureSource _frameProxies;
+
+        /// <summary>
         /// True when the assembly succeeded but its result cannot be expressed on the target renderer type (a
         /// skinned result on a non-skinned target). Such a node draws nothing and says why.
         /// </summary>
@@ -116,7 +136,8 @@ namespace AvatarPartAssembler.Editor.Preview
             IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings,
             ApaPreviewDebugData debugData,
             bool cannotRepresent,
-            List<GameObject> shadowObjects)
+            List<GameObject> shadowObjects,
+            ApaPreviewCaptureSource frameProxies)
         {
             _avatarRoot = request.AvatarRoot;
             _targetRenderer = request.TargetRenderer;
@@ -134,15 +155,18 @@ namespace AvatarPartAssembler.Editor.Preview
             _debugData = debugData;
             _cannotRepresent = cannotRepresent;
             _shadowObjects = shadowObjects != null ? shadowObjects : new List<GameObject>();
+            _frameProxies = frameProxies ?? new ApaPreviewCaptureSource();
 
             // The materials are resolved from the live renderers rather than taken from the lease: the mesh is
             // cached and may be minutes old, while a material swap or a profile edit must be in the picture on the
-            // next frame. The plan and the captured context stay the reference for the slot structure.
+            // next frame. The plan and the captured context stay the reference for the slot structure, and the
+            // proxy map is what makes "live" mean "what the earlier preview stages left on the proxy".
             _liveMaterials = liveMaterials ?? ApaPreviewLiveMaterials.Create(
                 _lease != null ? _lease.Plan : null,
                 request.Context,
                 _targetRenderer,
-                _allInstallers);
+                _allInstallers,
+                _frameProxies);
 
             WhatChanged = RenderAspects.Mesh | RenderAspects.Material | RenderAspects.Shapes;
         }
@@ -160,6 +184,29 @@ namespace AvatarPartAssembler.Editor.Preview
         /// </remarks>
         public static IRenderFilterNode Create(ApaPreviewRequest request)
         {
+            return Create(request, null);
+        }
+
+        /// <summary>
+        /// Builds a node for a discovered request, reading the frame's renderer state through a proxy map.
+        /// </summary>
+        /// <param name="request">The group's captured inputs, as discovery resolved them.</param>
+        /// <param name="captureSource">
+        /// The proxies NDMF handed the filter, or null when the caller has none (a direct call in a test). When an
+        /// earlier preview stage has substituted this group's geometry, the request's inputs were captured from
+        /// the author's renderers — discovery runs before any proxy exists — so the group is re-captured through
+        /// this source before anything is assembled. A re-capture that cannot be produced draws nothing and says
+        /// why, rather than falling back to the uncut original mesh.
+        /// </param>
+        /// <remarks>
+        /// <b>This method never throws.</b> It runs on NDMF's node-construction path, where an escaping exception
+        /// faults the pipeline's build task and takes every filter's preview down with it. A failure after the
+        /// cache lease has been taken releases the lease — a leased entry is never evicted, so a leaked lease pins
+        /// a generated mesh until process teardown — reports one deduplicated internal diagnostic, and returns an
+        /// <see cref="ApaPreviewEmptyNode"/>, which draws nothing and leaves the original body visible.
+        /// </remarks>
+        public static IRenderFilterNode Create(ApaPreviewRequest request, ApaPreviewCaptureSource captureSource)
+        {
             if (request == null)
             {
                 // Not reachable from Instantiate (which answers this case first), but Create is public and must
@@ -173,9 +220,47 @@ namespace AvatarPartAssembler.Editor.Preview
             ApaPreviewLease lease = null;
             ApaPreviewLiveMaterials liveMaterials = null;
             List<GameObject> shadowObjects = new List<GameObject>();
+            var frameProxies = captureSource ?? new ApaPreviewCaptureSource();
             try
             {
-                lease = BuildThroughCore(request);
+                var effective = request;
+
+                if (frameProxies.SubstitutesUpstreamState)
+                {
+                    effective = RecaptureAfterUpstreamStage(request, frameProxies);
+                    if (effective == null)
+                    {
+                        // The earlier stage's geometry could not be reconciled with this group. Drawing nothing
+                        // leaves the avatar as that stage rendered it — the honest picture — while the report
+                        // carries the reason. Falling back to the pre-capture request would silently redraw the
+                        // uncut body over the cut one, which is the defect this path exists to prevent.
+                        ApaPreviewDiagnostics.Report(ApaPreviewDiagnostics.Build(
+                            request.DiagnosticKey,
+                            request.AvatarRoot,
+                            request.TargetRenderer,
+                            request.TargetRendererPath,
+                            request.Issues,
+                            new[]
+                            {
+                                "An earlier preview stage modified this group's geometry and the group could not " +
+                                "be re-captured from it, so the assembled preview was not drawn. The Scene View " +
+                                "shows the earlier stage's result unchanged."
+                            },
+                            false));
+
+                        return new ApaPreviewEmptyNode(
+                            "an earlier preview stage modified this group and it could not be re-captured",
+                            RenderAspects.Mesh | RenderAspects.Material | RenderAspects.Shapes,
+                            request);
+                    }
+
+                    // The re-captured inputs carry their own diagnostics (the upstream-modification report, and a
+                    // blocked derivation if there is one), so the overlay and the console describe the state this
+                    // preview now shows rather than the pre-proxy one.
+                    ApaPreviewDiagnostics.ReportRequest(effective);
+                }
+
+                lease = BuildThroughCore(effective);
 
                 ApaPreviewBoneMap boneMap = ApaPreviewBoneMap.Empty;
                 List<ApaPreviewBlendShapeBinding> shapeBindings = new List<ApaPreviewBlendShapeBinding>();
@@ -183,8 +268,8 @@ namespace AvatarPartAssembler.Editor.Preview
 
                 if (lease.IsValid)
                 {
-                    var partRenderers = ApaPreviewDiscovery.BuildPartRendererMap(request.Installers);
-                    boneMap = ApaPreviewBoneMap.Resolve(lease.Plan, request.AvatarRoot, request.Installers);
+                    var partRenderers = ApaPreviewDiscovery.BuildPartRendererMap(effective.Installers);
+                    boneMap = ApaPreviewBoneMap.Resolve(lease.Plan, effective.AvatarRoot, effective.Installers);
 
                     // The authoring hierarchy has not merged the part armature into the avatar's, so part-side
                     // bones in the table would ignore avatar motion and the drawn mesh would drift away from the
@@ -192,36 +277,39 @@ namespace AvatarPartAssembler.Editor.Preview
                     // merge, and the hierarchy makes the preview follow the skeleton without per-frame work.
                     boneMap = ApaPreviewShadowBones.Attach(boneMap, shadowObjects);
 
-                    shapeBindings = ApaPreviewBlendShapeMap.Build(lease.Plan, request.TargetRenderer, partRenderers);
+                    shapeBindings = ApaPreviewBlendShapeMap.Build(lease.Plan, effective.TargetRenderer, partRenderers);
 
-                    ReportUnresolvedBones(request, boneMap);
+                    ReportUnresolvedBones(effective, boneMap);
 
                     // The material report and the node both read the live material list, so the count the author
                     // is told about is the count the proxy will actually be given.
                     liveMaterials = ApaPreviewLiveMaterials.Create(
-                        lease.Plan, request.Context, request.TargetRenderer, request.AllInstallers);
-                    ReportMaterialMismatch(request, lease, liveMaterials.Resolve());
+                        lease.Plan, effective.Context, effective.TargetRenderer, effective.AllInstallers,
+                        frameProxies);
+                    ReportMaterialMismatch(effective, lease, liveMaterials.Resolve());
 
                     // A skinned result cannot be shown on a non-skinned target: a MeshRenderer has no bones and no
                     // bind poses, so the assembled mesh would render in rest pose while the build would not. The
                     // preview refuses to show a result it cannot show faithfully, and reports the reason.
-                    if (lease.Plan != null && lease.Plan.RequiresSkinning && !(request.TargetRenderer is SkinnedMeshRenderer))
+                    if (lease.Plan != null && lease.Plan.RequiresSkinning
+                        && !(effective.TargetRenderer is SkinnedMeshRenderer))
                     {
                         cannotRepresent = true;
-                        ReportUnrepresentableSkinning(request);
+                        ReportUnrepresentableSkinning(effective);
                     }
                 }
                 else
                 {
-                    ReportBuildFailure(request, lease);
+                    ReportBuildFailure(effective, lease);
                 }
 
-                var debugData = ApaPreviewDebugData.Create(request, lease.Plan, lease.Issues, boneMap);
+                var debugData = ApaPreviewDebugData.Create(effective, lease.Plan, lease.Issues, boneMap);
 
                 var node = new ApaPreviewNode(
-                    request, lease, liveMaterials, boneMap, shapeBindings, debugData, cannotRepresent, shadowObjects);
+                    effective, lease, liveMaterials, boneMap, shapeBindings, debugData, cannotRepresent,
+                    shadowObjects, frameProxies);
 
-                if (debugData != null) ApaPreviewDebugOverlay.Register(request.TargetRenderer, debugData);
+                if (debugData != null) ApaPreviewDebugOverlay.Register(effective.TargetRenderer, debugData);
 
                 return node;
             }
@@ -240,6 +328,29 @@ namespace AvatarPartAssembler.Editor.Preview
                     RenderAspects.Mesh | RenderAspects.Material | RenderAspects.Shapes,
                     request);
             }
+        }
+
+        /// <summary>
+        /// Re-discovers this node's own group through the proxy map, so the assembly is built from the geometry
+        /// an earlier preview stage produced.
+        /// </summary>
+        /// <remarks>
+        /// Discovery resolves the target set before any proxy exists, so its capture read the author's renderers.
+        /// This is the point where the proxy is known: the node re-runs the same discovery entry point with the
+        /// source, then finds its own group by key (and by target renderer reference, in case the key moved) so a
+        /// multi-target avatar never assembles another group's geometry. Returns null when the group is not there
+        /// or cannot be captured, which the caller turns into "draw nothing".
+        /// </remarks>
+        private static ApaPreviewRequest RecaptureAfterUpstreamStage(
+            ApaPreviewRequest request, ApaPreviewCaptureSource captureSource)
+        {
+            if (request.AvatarRoot == null) return null;
+
+            var installers = ApaPreviewDiscovery.CollectAllInstallers(request.AvatarRoot);
+            var groups = ApaPreviewDiscovery.DiscoverGroups(
+                request.AvatarRoot, installers, request.NumericPolicy, captureSource);
+
+            return ApaPreviewDiscovery.FindGroup(groups, request.GroupKey, request.TargetRenderer);
         }
 
         private static ApaPreviewLease BuildThroughCore(ApaPreviewRequest request)
@@ -354,6 +465,12 @@ namespace AvatarPartAssembler.Editor.Preview
         {
             if (_disposed || proxy == null || original == null) return;
 
+            // The frame's own proxy pair is recorded before anything is read from it. NDMF may hand a replacement
+            // controller different proxy objects, and every read below — the material list and the blend-shape
+            // weights — has to answer from the proxy this frame actually draws, which is where the earlier
+            // preview stages left their result.
+            _frameProxies.Record(original, proxy);
+
             // A part renderer this group's assembly replaced. The build destroys it, so a proxy that kept drawing
             // it would show the part twice: once inside the assembled mesh and once as its own renderer. NDMF
             // restores the original's enabled state onto the proxy at the start of every frame, so the hidden
@@ -385,7 +502,8 @@ namespace AvatarPartAssembler.Editor.Preview
                 _lease.Mesh,
                 _liveMaterials != null ? _liveMaterials.Resolve() : _lease.Materials,
                 _boneMap,
-                _shapeBindings);
+                _shapeBindings,
+                _frameProxies);
         }
 
         /// <summary>True when this group's assembly replaced the given renderer.</summary>
@@ -411,6 +529,12 @@ namespace AvatarPartAssembler.Editor.Preview
 
             try
             {
+                // The proxy map is re-pointed at the proxies this refresh was handed before anything reads it. A
+                // refresh may be answered by a replacement controller whose proxies are different objects, and a
+                // stale map would read a previous generation's renderer state — the exact "stale mesh" failure the
+                // reuse check exists to prevent.
+                RebindFrameProxies(proxyPairs);
+
                 return Task.FromResult(RefreshCore(proxyPairs, context, updatedAspects));
             }
             catch (Exception e)
@@ -425,6 +549,25 @@ namespace AvatarPartAssembler.Editor.Preview
                     RenderAspects.Mesh | RenderAspects.Material | RenderAspects.Shapes,
                     _request));
             }
+        }
+
+        /// <summary>Re-points the frame's proxy map at the pairs a refresh was handed.</summary>
+        /// <remarks>
+        /// The map is cleared first: a renderer that is no longer in the group must stop answering through a
+        /// proxy that belongs to a retired generation. An empty pair set leaves an empty map, which reads as
+        /// "no substitute" and falls back to the live renderers — the safe direction.
+        /// </remarks>
+        private ApaPreviewCaptureSource RebindFrameProxies(IEnumerable<(Renderer, Renderer)> pairs)
+        {
+            _frameProxies.Clear();
+            if (pairs == null) return _frameProxies;
+
+            foreach (var pair in pairs)
+            {
+                _frameProxies.Record(pair.Item1, pair.Item2);
+            }
+
+            return _frameProxies;
         }
 
         private IRenderFilterNode RefreshCore(
@@ -504,7 +647,7 @@ namespace AvatarPartAssembler.Editor.Preview
                     string.Equals(live.GeometryFingerprint, _geometryFingerprint, StringComparison.Ordinal))
                 {
                     _liveMaterials = ApaPreviewLiveMaterials.Create(
-                        _lease.Plan, live.Context, live.TargetRenderer, live.Installers);
+                        _lease.Plan, live.Context, live.TargetRenderer, live.Installers, _frameProxies);
 
                     // The node now draws the live inputs, so it adopts their fingerprint: keeping the stale one
                     // would make every later refresh repeat the two full content hashes that got us here.
@@ -525,15 +668,22 @@ namespace AvatarPartAssembler.Editor.Preview
         /// Re-captures the live scene and returns this node's own target group, or null when it is gone.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// A node is bound to one target group, so a re-capture that finds the avatar's groups must resolve the
         /// same group rather than "the avatar's preview": with several targets, taking the first group would draw
         /// another renderer's mesh onto this proxy.
+        /// </para>
+        /// <para>
+        /// The capture goes through the frame's proxy map, which is what keeps a refresh from rebuilding the
+        /// assembly out of the author's uncut geometry after an earlier stage replaced it.
+        /// </para>
         /// </remarks>
         private ApaPreviewRequest DiscoverLive()
         {
             if (_avatarRoot == null) return null;
 
-            var groups = ApaPreviewDiscovery.DiscoverGroups(_avatarRoot, _policy);
+            var installers = ApaPreviewDiscovery.CollectAllInstallers(_avatarRoot);
+            var groups = ApaPreviewDiscovery.DiscoverGroups(_avatarRoot, installers, _policy, _frameProxies);
             return ApaPreviewDiscovery.FindGroup(groups, _groupKey, _targetRenderer);
         }
 
@@ -544,6 +694,10 @@ namespace AvatarPartAssembler.Editor.Preview
             _disposed = true;
 
             ApaPreviewDebugOverlay.Unregister(_targetRenderer, _debugData);
+
+            // The proxy map is dropped with the node: the proxies belong to the pipeline generation that is being
+            // retired, and a later read of one would be a read of a destroyed object.
+            _frameProxies.Clear();
 
             // Releasing the lease never destroys the mesh outright: the cache keeps it for reuse and destroys it
             // on eviction or teardown, which is what keeps a pipeline swap from destroying a mesh the outgoing
@@ -623,8 +777,9 @@ namespace AvatarPartAssembler.Editor.Preview
             }
 
             // Create is exception-safe: a failure here returns the empty node rather than escaping into the
-            // pipeline's build task.
-            return ApaPreviewNode.Create(live);
+            // pipeline's build task. The replacement gets its own copy of the proxy map: this node is disposed
+            // after the swap and clears its own, and a shared map would go blind with it.
+            return ApaPreviewNode.Create(live, _frameProxies.Copy());
         }
 
         /// <summary>True when a re-captured request observes exactly the objects this node already registered.</summary>
@@ -752,7 +907,13 @@ namespace AvatarPartAssembler.Editor.Preview
                 ApaPreviewInputObserver.Observe(
                     context, _request.AvatarRoot, _request.AllInstallers, _request.TargetRenderer);
 
-                var groups = ApaPreviewDiscovery.DiscoverGroups(_request.AvatarRoot, _request.NumericPolicy);
+                // A retry reads through the same proxy map the original attempt would have used: this node exists
+                // precisely because a capture or an assembly failed, and re-reading the author's uncut renderers
+                // would replace an earlier preview stage's result with the geometry the user is not looking at.
+                var captureSource = ApaPreviewCaptureSource.FromProxyPairs(proxyPairs);
+
+                var groups = ApaPreviewDiscovery.DiscoverGroups(
+                    _request.AvatarRoot, _request.NumericPolicy, captureSource);
                 var live = ApaPreviewDiscovery.FindGroup(groups, _request.GroupKey, _request.TargetRenderer);
 
                 if (live != null && live.IsRenderable && live.TargetRenderer != null)
@@ -760,7 +921,7 @@ namespace AvatarPartAssembler.Editor.Preview
                     ApaPreviewDiagnostics.ReportRequest(live);
 
                     // Create is exception-safe: a failure returns another empty node rather than escaping.
-                    return Task.FromResult(ApaPreviewNode.Create(live));
+                    return Task.FromResult(ApaPreviewNode.Create(live, captureSource));
                 }
             }
             catch (Exception e)

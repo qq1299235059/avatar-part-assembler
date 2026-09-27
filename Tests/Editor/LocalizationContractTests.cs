@@ -613,7 +613,10 @@ namespace AvatarPartAssembler.Tests
                 ApaErrorCode.InvalidConflictPriority, ApaErrorCode.SubMeshWithoutMaterialSlot,
                 ApaErrorCode.InactiveInstallerSkipped, ApaErrorCode.PartOnlyShapeDisallowed,
                 ApaErrorCode.UvSemanticChannelAbsent, ApaErrorCode.MergeVertexGroupInvalid,
-                ApaErrorCode.SeamCandidateColorInvalid, ApaErrorCode.InternalError
+                ApaErrorCode.SeamCandidateColorInvalid,
+                ApaErrorCode.PreviewUpstreamModification, ApaErrorCode.BodyMeshDerivationUnproven,
+                ApaErrorCode.BodyMeshDerivationProven, ApaErrorCode.InstallerRemovedFromBuild,
+                ApaErrorCode.InternalError
             };
 
             var missing = new List<string>();

@@ -291,6 +291,17 @@ namespace AvatarPartAssembler.Editor.Preview
         /// <summary>Index on the generated mesh.</summary>
         public readonly int FinalShape;
 
+        /// <summary>
+        /// The generated mesh's own name for this shape, or an empty string when the plan carries none.
+        /// </summary>
+        /// <remarks>
+        /// The name is what makes the weight readable from a <i>substitute</i> renderer. The proxy may carry a
+        /// different mesh from the one the binding was computed against (a Mesh Cutter's cut body, or the
+        /// assembled mesh after this frame's write), and a shape index is only meaningful against the mesh it was
+        /// computed on. The name is stable across all of them, so it is tried before the index.
+        /// </remarks>
+        public readonly string FinalShapeName;
+
         /// <summary>Source key: an empty string for the target body, otherwise the part id.</summary>
         public readonly string SourceKey;
 
@@ -301,9 +312,15 @@ namespace AvatarPartAssembler.Editor.Preview
         public readonly Renderer SourceRenderer;
 
         /// <summary>Creates a binding.</summary>
-        public ApaPreviewBlendShapeBinding(int finalShape, string sourceKey, int sourceShape, Renderer sourceRenderer)
+        public ApaPreviewBlendShapeBinding(
+            int finalShape,
+            string sourceKey,
+            int sourceShape,
+            Renderer sourceRenderer,
+            string finalShapeName = null)
         {
             FinalShape = finalShape;
+            FinalShapeName = finalShapeName ?? string.Empty;
             SourceKey = sourceKey ?? string.Empty;
             SourceShape = sourceShape;
             SourceRenderer = sourceRenderer;
@@ -352,7 +369,8 @@ namespace AvatarPartAssembler.Editor.Preview
                     i,
                     sourceKey,
                     shape.SourceIndexFor(sourceKey),
-                    sourceRenderer));
+                    sourceRenderer,
+                    shape.Name));
             }
 
             return bindings;
@@ -384,18 +402,31 @@ namespace AvatarPartAssembler.Editor.Preview
         /// <param name="materials">Final materials; asset references, assigned but never owned.</param>
         /// <param name="boneMap">Final bones resolved onto live transforms, or null for a static mesh.</param>
         /// <param name="shapeBindings">Blend shape weight sources, or null when the mesh has no shapes.</param>
+        /// <param name="readSource">
+        /// The proxy map the frame's weights are read through, or null to read the original renderers. The
+        /// preview passes its map so a Modular Avatar Shape Changer's weight — which lives on the proxy — is what
+        /// the assembled mesh is given, instead of the author's unmodified weight.
+        /// </param>
         public static void Apply(
             Renderer proxy,
             Mesh mesh,
             Material[] materials,
             ApaPreviewBoneMap boneMap,
-            IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings)
+            IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings,
+            ApaCaptureSource readSource = null)
         {
             if (proxy == null || mesh == null) return;
 
             var skinned = proxy as SkinnedMeshRenderer;
             if (skinned != null)
             {
+                // The weights are read before the proxy's mesh is replaced. A blend shape weight is an index into
+                // the mesh the renderer currently holds, and the proxy holds the earlier stage's mesh at this
+                // point — the one whose shape order the earlier stage's weight was written against. Reading after
+                // the swap would index the assembled mesh, where a shape the plan reordered or merged could answer
+                // with another shape's weight.
+                var weights = ReadBlendShapeWeights(shapeBindings, readSource);
+
                 skinned.sharedMesh = mesh;
                 ApplyBones(skinned, boneMap);
 
@@ -415,7 +446,7 @@ namespace AvatarPartAssembler.Editor.Preview
                 // the proxy — asks Unity to keep the bounds up to date.
                 skinned.updateWhenOffscreen = true;
 
-                ApplyBlendShapeWeights(skinned, shapeBindings);
+                ApplyBlendShapeWeights(skinned, shapeBindings, weights);
             }
             else
             {
@@ -433,17 +464,62 @@ namespace AvatarPartAssembler.Editor.Preview
             }
         }
 
-        /// <summary>Reads the current weight of a binding's source shape, or zero when the source is gone.</summary>
-        public static float ReadWeight(ApaPreviewBlendShapeBinding binding)
+        /// <summary>
+        /// Reads the current weight of a binding's source shape, through the frame's proxy when there is one.
+        /// </summary>
+        /// <param name="binding">The binding whose source weight is read.</param>
+        /// <param name="readSource">
+        /// The proxy map, or null. When the source has a substitute for the binding's renderer, the weight is read
+        /// from the substitute: that is where an earlier preview stage (a Shape Changer) wrote it, and NDMF resets
+        /// the original every frame, so the original no longer carries the previewed value.
+        /// </param>
+        /// <remarks>
+        /// The shape is looked up by name first and by the plan's source index second. A substitute may hold a
+        /// different mesh — a Mesh Cutter's cut body, whose vertex data is the same but which is a distinct mesh
+        /// object — and the name is the one identity that survives that. A shape neither lookup finds reads as
+        /// zero, which is the honest answer: the mesh being read has no such shape to weight.
+        /// </remarks>
+        public static float ReadWeight(ApaPreviewBlendShapeBinding binding, ApaCaptureSource readSource = null)
         {
-            var source = binding.SourceRenderer as SkinnedMeshRenderer;
-            if (source == null) return 0f;
+            var substitute = readSource != null ? readSource.SubstitutedRendererFor(binding.SourceRenderer) : null;
+            var source = substitute != null ? substitute : binding.SourceRenderer;
 
-            var mesh = source.sharedMesh;
+            var skinned = source as SkinnedMeshRenderer;
+            if (skinned == null) return 0f;
+
+            var mesh = skinned.sharedMesh;
             if (mesh == null) return 0f;
-            if (binding.SourceShape < 0 || binding.SourceShape >= mesh.blendShapeCount) return 0f;
 
-            return source.GetBlendShapeWeight(binding.SourceShape);
+            var index = -1;
+            if (!string.IsNullOrEmpty(binding.FinalShapeName))
+            {
+                index = mesh.GetBlendShapeIndex(binding.FinalShapeName);
+            }
+
+            if (index < 0) index = binding.SourceShape;
+            if (index < 0 || index >= mesh.blendShapeCount) return 0f;
+
+            return skinned.GetBlendShapeWeight(index);
+        }
+
+        /// <summary>Reads every binding's weight into a frame-local array.</summary>
+        /// <remarks>
+        /// The array exists so the reads happen before the proxy's mesh is replaced. It is empty when there is
+        /// nothing to read, so a shape-less preview pays nothing.
+        /// </remarks>
+        private static float[] ReadBlendShapeWeights(
+            IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings,
+            ApaCaptureSource readSource)
+        {
+            if (shapeBindings == null || shapeBindings.Count == 0) return null;
+
+            var weights = new float[shapeBindings.Count];
+            for (var i = 0; i < shapeBindings.Count; i++)
+            {
+                weights[i] = ReadWeight(shapeBindings[i], readSource);
+            }
+
+            return weights;
         }
 
         private static void ApplyBones(SkinnedMeshRenderer proxy, ApaPreviewBoneMap boneMap)
@@ -456,14 +532,15 @@ namespace AvatarPartAssembler.Editor.Preview
 
         private static void ApplyBlendShapeWeights(
             SkinnedMeshRenderer proxy,
-            IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings)
+            IReadOnlyList<ApaPreviewBlendShapeBinding> shapeBindings,
+            float[] weights)
         {
-            if (shapeBindings == null || shapeBindings.Count == 0) return;
+            if (shapeBindings == null || weights == null) return;
 
-            for (var i = 0; i < shapeBindings.Count; i++)
+            var count = Mathf.Min(shapeBindings.Count, weights.Length);
+            for (var i = 0; i < count; i++)
             {
-                var binding = shapeBindings[i];
-                proxy.SetBlendShapeWeight(binding.FinalShape, ReadWeight(binding));
+                proxy.SetBlendShapeWeight(shapeBindings[i].FinalShape, weights[i]);
             }
         }
     }

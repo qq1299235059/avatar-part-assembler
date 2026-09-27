@@ -728,10 +728,44 @@ namespace AvatarPartAssembler.Editor
         /// </remarks>
         public string BoneScopePath { get; }
 
+        /// <summary>
+        /// The proven correspondence between <see cref="Mesh"/> and the body the profile was authored against,
+        /// or null when the capture read the renderer's own mesh.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Non-null only in one situation: a preview capture read a mesh an earlier stage had substituted (a
+        /// Modular Avatar Mesh Cutter's cut body), the substitution was proven to be a triangle-subset derivation
+        /// of the authored body, and the profile's addresses were therefore mapped instead of applied directly.
+        /// The build never sets it — the build reads the renderer it is about to replace — so every build
+        /// decision is byte-identical to before this field existed.
+        /// </para>
+        /// <para>
+        /// The issues that describe the proof ride on the capture's issue list, not here: this is a value a
+        /// consumer maps addresses through, not a report.
+        /// </para>
+        /// </remarks>
+        public ApaBodyMeshProvenance BodyProvenance { get; }
+
+        /// <summary>
+        /// The mesh the profile's triangle, seam, and fingerprint addresses are expressed against.
+        /// </summary>
+        /// <remarks>
+        /// This one property is the whole address-space switch. Without a proven correspondence it <i>is</i>
+        /// <see cref="Mesh"/>, so every existing consumer reads exactly what it read before; with one it is the
+        /// authored body, which is the mesh the profile was authored against and the only mesh its addresses can
+        /// be validated or compared against.
+        /// </remarks>
+        public MeshSnapshot AuthoredMesh => BodyProvenance != null ? BodyProvenance.AuthoredMesh : Mesh;
+
         /// <summary>Creates a base snapshot.</summary>
         /// <param name="boneScopePath">
         /// The armature the body's bone paths are relative to, or null/empty for the avatar-root-relative form.
         /// Optional so that every pre-M10 call site keeps compiling and keeps its exact behaviour.
+        /// </param>
+        /// <param name="bodyProvenance">
+        /// The proven correspondence to the authored body, or null for an ordinary capture. Optional so that
+        /// every existing call site keeps compiling and keeps its exact behaviour.
         /// </param>
         public BaseSnapshot(
             MeshSnapshot mesh,
@@ -741,7 +775,8 @@ namespace AvatarPartAssembler.Editor
             IReadOnlyList<ApaUvChannelSemantic> expectedUvSemantics = null,
             IReadOnlyList<ApaMaterialSlotSemantic> expectedMaterialSemantics = null,
             Matrix4x4 rendererLocalToWorld = default,
-            string boneScopePath = null)
+            string boneScopePath = null,
+            ApaBodyMeshProvenance bodyProvenance = null)
         {
             Mesh = mesh ?? throw new ArgumentNullException(nameof(mesh));
             Transforms = transforms;
@@ -755,6 +790,7 @@ namespace AvatarPartAssembler.Editor
             // meaningful instead of producing a bind pose of zero.
             RendererLocalToWorld = rendererLocalToWorld == default ? Matrix4x4.identity : rendererLocalToWorld;
             BoneScopePath = boneScopePath ?? string.Empty;
+            BodyProvenance = bodyProvenance;
         }
     }
 }

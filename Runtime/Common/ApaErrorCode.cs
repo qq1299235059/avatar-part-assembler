@@ -33,6 +33,11 @@ namespace AvatarPartAssembler
     /// allocation and is no longer emitted by this build, while APA052
     /// (<c>SEAM_CANDIDATE_COLOR_INVALID</c>) is the M14 code the vertex-color candidate contract emits; see
     /// <see cref="ApaReservedCodes.Milestone14"/>.
+    /// M15 allocated APA053 and APA054 for the protected part-mesh payload and its distribution-leak refusal; see
+    /// <see cref="ApaReservedCodes.Milestone15"/>. M16 allocates APA055 through APA058 for the preview/build
+    /// cleanup work: a preview capture that read a substituted mesh, the body-mesh derivation proof and its
+    /// refusal, and the removal of the installers a successful build clone still carries; see
+    /// <see cref="ApaReservedCodes.Milestone16"/>.
     /// </para>
     /// </remarks>
     public static class ApaErrorCode
@@ -675,6 +680,89 @@ namespace AvatarPartAssembler
         /// </remarks>
         public const string ProtectedMeshSourceLeak = "APA054";
 
+        /// <summary>
+        /// A capture read a renderer's mesh or materials from a substitute rather than from the renderer itself.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Informational, and the reason the rest of the report is readable. In NDMF's Scene View preview a later
+        /// filter is handed the proxy an earlier filter already wrote to: Modular Avatar's Mesh Cutter replaces
+        /// the body's mesh there, its Shape Changer replaces blend-shape weights, and its Material Setter replaces
+        /// materials. A capture that read the author's original renderer would silently show the uncut body and
+        /// defeat those components, so the capture reads the proxy and says so.
+        /// </para>
+        /// <para>
+        /// The condition is carried by a stable <c>reason=…</c> token
+        /// (<c>upstream-preview-mesh-modified</c> when an earlier stage substituted the geometry,
+        /// <c>upstream-preview-materials-modified</c> when it substituted only the material list), and the detail
+        /// names the renderer. It never blocks on its own: a substitution that cannot be reconciled with the
+        /// profile is refused by <see cref="ProfileMeshFingerprintMismatch"/> (<c>APA048</c>) or by
+        /// <see cref="BodyMeshDerivationUnproven"/> (<c>APA056</c>), which name the remedy.
+        /// </para>
+        /// <para>Allocated by M16 above the M15 range.</para>
+        /// </remarks>
+        public const string PreviewUpstreamModification = "APA055";
+
+        /// <summary>
+        /// A captured body mesh could not be proven to be the authored body with triangles removed, so no
+        /// authored triangle or vertex address was applied to it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Always blocking, and it never guesses.</b> A profile's removal triangles, seam vertex indices, and
+        /// compatibility fingerprint are all expressed against the mesh the profile was authored on. When an
+        /// earlier preview stage rewrites the body geometry, the captured mesh is a <i>different</i> mesh, and
+        /// applying authored addresses to it by position would delete or weld the wrong geometry. The
+        /// correspondence is therefore proven exactly (<see cref="ApaBodyMeshProvenance"/>) and a derivation that
+        /// cannot be proven is refused instead of approximated.
+        /// </para>
+        /// <para>
+        /// The failing condition is carried by a stable <c>reason=…</c> token
+        /// (<c>body-provenance-mesh-unreadable</c>, <c>body-provenance-vertex-count-mismatch</c>,
+        /// <c>body-provenance-vertex-data-mismatch</c>, <c>body-provenance-vertex-index-remap</c>,
+        /// <c>body-provenance-submesh-count-mismatch</c>, <c>body-provenance-topology-mismatch</c>,
+        /// <c>body-provenance-index-order-mismatch</c>, <c>body-provenance-blendshape-mismatch</c>, and
+        /// <c>body-provenance-bindpose-mismatch</c>), and the remedy is stated in the message: author the profile
+        /// against the mesh the earlier stage produces, or remove the stage that rewrites the body geometry.
+        /// </para>
+        /// <para>Allocated by M16 above the M15 range.</para>
+        /// </remarks>
+        public const string BodyMeshDerivationUnproven = "APA056";
+
+        /// <summary>
+        /// A captured body mesh was proven to be the authored body with triangles removed, and the authored
+        /// addresses were translated onto it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Informational. It is the positive half of <see cref="BodyMeshDerivationUnproven"/>: the proof
+        /// succeeded, so the removal addresses and seam vertex indices the profile recorded were mapped onto the
+        /// captured mesh rather than being applied to it as if the two meshes were the same. The detail carries
+        /// <c>reason=body-provenance-proven-derivation</c>, the authored and captured triangle counts, and how
+        /// many triangles the earlier stage removed.
+        /// </para>
+        /// <para>Allocated by M16 above the M15 range.</para>
+        /// </remarks>
+        public const string BodyMeshDerivationProven = "APA057";
+
+        /// <summary>
+        /// A successful build clone still carried <see cref="AvatarPartInstaller"/> components, which were removed.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Informational. The assembly consumes an installer only when the part's geometry was assembled, so a
+        /// parked installer — or one whose part contributed no geometry — survives it. The component is a plain
+        /// runtime <c>MonoBehaviour</c>, so the VRChat client reports it as a component it will remove; this code
+        /// records that the build removed it from the clone instead, and how many were removed.
+        /// </para>
+        /// <para>
+        /// The detail carries <c>reason=installer-removed-from-build</c> and the count. It is never emitted on a
+        /// failed build: the cleanup is gated on <c>BuildContext.Successful</c> so a failure keeps its evidence.
+        /// </para>
+        /// <para>Allocated by M16 above the M15 range.</para>
+        /// </remarks>
+        public const string InstallerRemovedFromBuild = "APA058";
+
         /// <summary>An unexpected exception escaped the assembler. Always accompanied by the exception detail.</summary>
         public const string InternalError = "APA999";
         /// <summary>
@@ -739,6 +827,10 @@ namespace AvatarPartAssembler
                 case SeamCandidateColorInvalid: return "SEAM_CANDIDATE_COLOR_INVALID";
                 case ProtectedMeshInvalid: return "PROTECTED_MESH_INVALID";
                 case ProtectedMeshSourceLeak: return "PROTECTED_MESH_SOURCE_LEAK";
+                case PreviewUpstreamModification: return "PREVIEW_UPSTREAM_MODIFICATION";
+                case BodyMeshDerivationUnproven: return "BODY_MESH_DERIVATION_UNPROVEN";
+                case BodyMeshDerivationProven: return "BODY_MESH_DERIVATION_PROVEN";
+                case InstallerRemovedFromBuild: return "INSTALLER_REMOVED_FROM_BUILD";
                 case InternalError: return "INTERNAL_ERROR";
                 default: return string.Empty;
             }
@@ -944,6 +1036,37 @@ namespace AvatarPartAssembler
             ApaErrorCode.ProtectedMeshInvalid,
             ApaErrorCode.ProtectedMeshSourceLeak
         };
+
+        /// <summary>
+        /// Codes allocated by M16: the preview's upstream-capture report, the body-mesh derivation proof and its
+        /// refusal, and the installer cleanup a successful build performs.
+        /// </summary>
+        /// <remarks>
+        /// Kept as its own allocation record for the same reason as the earlier arrays: a later milestone reads
+        /// which milestone introduced a code, and a milestone that adds codes never renumbers an existing one.
+        /// <c>APA055</c> and <c>APA057</c> and <c>APA058</c> are informational; <c>APA056</c> is the one blocking
+        /// code, and it carries every way the derivation proof can fail behind a stable <c>reason=…</c> token
+        /// because all of them share one remedy.
+        /// </remarks>
+        public static readonly string[] Milestone16 =
+        {
+            ApaErrorCode.PreviewUpstreamModification,
+            ApaErrorCode.BodyMeshDerivationUnproven,
+            ApaErrorCode.BodyMeshDerivationProven,
+            ApaErrorCode.InstallerRemovedFromBuild
+        };
+
+        /// <summary>Returns true when the code was allocated for the M16 preview/build cleanup work.</summary>
+        public static bool IsMilestone16Code(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return false;
+            for (var i = 0; i < Milestone16.Length; i++)
+            {
+                if (string.Equals(Milestone16[i], code, StringComparison.Ordinal)) return true;
+            }
+
+            return false;
+        }
 
         /// <summary>Returns true when the code was allocated for the M12 safety work.</summary>
         public static bool IsMilestone12Code(string code)

@@ -1,7 +1,9 @@
 {
     "name": "dev.avatar-part-assembler.runtime",
     "rootNamespace": "AvatarPartAssembler",
-    "references": [],
+    "references": [
+        "nadena.dev.ndmf.runtime"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

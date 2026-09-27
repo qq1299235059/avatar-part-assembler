@@ -325,8 +325,10 @@ namespace AvatarPartAssembler.Editor
                 // decision here, and it is empty for the legacy single-target entry points.
                 context.GroupKey,
                 // The policy's one decision about a contested region, recorded as a value. Validation has already
-                // proved every contested address is resolvable, so an unresolved overlap cannot reach a plan.
-                RemovalRule.ResolveOwners(context.Parts),
+                // proved every contested address is resolvable, so an unresolved overlap cannot reach a plan. The
+                // map's keys follow the removal set through the body-mesh derivation, so the plan never names one
+                // triangle as removed and a different one as owned.
+                MapRemovalOwners(context),
                 // The weld/split decision every emitted seam vertex was produced from, so a consumer can read why a
                 // part vertex was kept instead of re-deriving the UV rule.
                 seamWelds);
@@ -423,19 +425,88 @@ namespace AvatarPartAssembler.Editor
         /// (submesh, triangle) order. Overlaps were already reported by the removal rule, so this is only
         /// reached for a valid configuration.
         /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>The addresses are authored addresses, and the plan is built from the captured mesh.</b> Without a
+        /// proven body-mesh derivation the two are the same mesh and every address is used exactly as authored.
+        /// With one — a preview stage replaced the body geometry and the correspondence was proven — each address
+        /// is translated onto the captured mesh, and an address whose triangle the earlier stage already removed
+        /// is <i>dropped</i>: the claim "this triangle must not be in the output" is already satisfied, and
+        /// deleting the triangle that now sits at that index would remove geometry the author never selected.
+        /// </para>
+        /// <para>
+        /// An address the correspondence cannot translate is dropped rather than passed through. Validation has
+        /// already refused every out-of-range address against the authored mesh, so this is unreachable for a
+        /// validated configuration; the conservative direction is to lose a removal rather than to apply an
+        /// authored index to a mesh it does not describe.
+        /// </para>
+        /// </remarks>
         private static RemovedTriangleAddressSet CollectRemovedTriangles(ValidationContext context)
         {
             var addresses = new List<RemovedTriangleAddress>();
+            var provenance = context.Base != null ? context.Base.BodyProvenance : null;
+
             for (var p = 0; p < context.Parts.Count; p++)
             {
                 var removed = context.Parts[p].RemovedTriangles;
                 if (removed == null) continue;
-                for (var i = 0; i < removed.Count; i++) addresses.Add(removed[i]);
+
+                for (var i = 0; i < removed.Count; i++)
+                {
+                    var address = removed[i];
+                    if (provenance == null)
+                    {
+                        addresses.Add(address);
+                        continue;
+                    }
+
+                    if (!provenance.TryMapAuthoredTriangle(
+                            address.SubMeshIndex, address.TriangleIndexWithinSubMesh, out var capturedTriangle))
+                    {
+                        continue;
+                    }
+
+                    // -1 means the earlier stage removed this triangle, so the claim is already satisfied.
+                    if (capturedTriangle < 0) continue;
+
+                    addresses.Add(new RemovedTriangleAddress(address.SubMeshIndex, capturedTriangle));
+                }
             }
 
             // The set canonicalizes: ascending order and no duplicates. Two parts that declare the same address
             // are already a reported error, so de-duplication here cannot hide a conflict.
             return new RemovedTriangleAddressSet(addresses);
+        }
+
+        /// <summary>
+        /// The removal-ownership map, keyed by the same captured addresses the plan's removal set uses.
+        /// </summary>
+        /// <remarks>
+        /// The owner table is resolved against the authored addresses (that is what the parts claim), so a proven
+        /// derivation has to move its keys with the claims. Without this, <c>MeshAssemblyPlan.OwnerOf</c> and
+        /// <c>MeshAssemblyPlan.RemovedTriangles</c> would name different triangles for the same region, which is
+        /// exactly the inconsistency the map exists to prevent.
+        /// </remarks>
+        private static IReadOnlyDictionary<RemovedTriangleAddress, string> MapRemovalOwners(ValidationContext context)
+        {
+            var owners = RemovalRule.ResolveOwners(context.Parts);
+            var provenance = context.Base != null ? context.Base.BodyProvenance : null;
+            if (provenance == null || owners == null || owners.Count == 0) return owners;
+
+            var mapped = new Dictionary<RemovedTriangleAddress, string>();
+            foreach (var pair in owners)
+            {
+                if (!provenance.TryMapAuthoredTriangle(
+                        pair.Key.SubMeshIndex, pair.Key.TriangleIndexWithinSubMesh, out var capturedTriangle))
+                {
+                    continue;
+                }
+
+                if (capturedTriangle < 0) continue;
+                mapped[new RemovedTriangleAddress(pair.Key.SubMeshIndex, capturedTriangle)] = pair.Value;
+            }
+
+            return mapped;
         }
 
         private static List<int> CollectBaseSeamVertices(ValidationContext context)

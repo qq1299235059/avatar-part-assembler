@@ -66,6 +66,16 @@ namespace AvatarPartAssembler.Editor.Ndmf
     /// explicitly after the retarget pass, because removing a consumed source object before its recorded
     /// animation paths have moved would leave the mapping with nothing to read.
     /// </description></item>
+    /// <item><description>
+    /// <b>No APA installer reaches the client.</b> Two independent mechanisms, because they cover different paths.
+    /// The component itself is editor-only (<see cref="AvatarPartInstaller"/> implements NDMF's
+    /// <c>INDMFEditorOnly</c>, which derives from <c>VRC.SDKBase.IEditorOnly</c> when the SDK is present), so the
+    /// VRChat SDK's own illegal-component scan of the <i>scene</i> avatar excludes it. And
+    /// <see cref="ApaInstallerCleanupPass"/> runs last in the same sequence: the assembly consumes an installer
+    /// only when its part's geometry was assembled, so a parked installer (and any installer whose part
+    /// contributed nothing) would otherwise survive in the processed avatar. The pass removes the remaining
+    /// components from the clone on a successful build and never touches the scene or a prefab.
+    /// </description></item>
     /// </list>
     /// <para>
     /// All of the passes are VRChat-avatar-only by default, which is NDMF's documented default for a plugin
@@ -160,7 +170,19 @@ namespace AvatarPartAssembler.Editor.Ndmf
             InPhase(BuildPhase.Transforming)
                 .AfterPlugin(ModularAvatarLateTransformPluginQualifiedName)
                 .WaitFor(ApaAnimatorRetargetPass.Instance)
-                .Run(ApaEmptySourceCleanupPass.Instance);
+                .Run(ApaEmptySourceCleanupPass.Instance)
+
+                // The last Transforming step: every installer component the assembly did not consume — a parked
+                // part, a part that contributed no geometry, an avatar whose only installers are parked — is
+                // removed from the clone here. AvatarPartInstaller is editor-only (it implements NDMF's
+                // INDMFEditorOnly, so the VRChat SDK panel no longer reports it as a component the client will
+                // remove), but the SDK's strip callbacks are replaced by Modular Avatar's and VRCFury's late ones
+                // and do not run at all on the direct AvatarProcessor.ProcessAvatar path this package uses for the
+                // Play Mode prebuild, so this pass is what keeps those results free of authoring-only components.
+                // It runs after the empty-source cleanup, which needs the consumed source objects to still exist
+                // while it decides whether they are empty, and it is gated on BuildContext.Successful, so a failed
+                // build keeps its evidence.
+                .Then.Run(ApaInstallerCleanupPass.Instance);
 
             // The last APA step of a build, in a later phase than everything above. Its only job is to release a
             // protected part's transient decrypted mesh if the assembly pass never got to it — an aborted build, a

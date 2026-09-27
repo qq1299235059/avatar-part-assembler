@@ -96,19 +96,27 @@ namespace AvatarPartAssembler.Editor
         /// avatar and no mesh is produced. This is the method a preview implementation should call when it needs
         /// to know whether the configuration is buildable before it touches a proxy.
         /// </remarks>
+        /// <param name="captureSource">
+        /// Where each renderer's mesh and materials are read from, or null for <see cref="ApaCaptureSource.Live"/>.
+        /// The preview supplies a source that reads the proxy NDMF prepared so an earlier preview stage's result
+        /// (a Modular Avatar Mesh Cutter's cut body, for instance) is what gets assembled; every other caller
+        /// leaves it null and reads the renderer itself, which is what the build must do.
+        /// </param>
         public static TargetGroupPlanResult PlanGroups(
             GameObject avatarRoot,
             ApaNumericPolicy numericPolicy,
             out List<ValidationIssue> issues,
             bool allowPostMergePartArmatureScope = false,
-            bool partMeshFingerprintsVerifiedBeforeMerge = false)
+            bool partMeshFingerprintsVerifiedBeforeMerge = false,
+            ApaCaptureSource captureSource = null)
         {
             return TargetGroupAssembly.Plan(
                 avatarRoot,
                 numericPolicy,
                 out issues,
                 allowPostMergePartArmatureScope,
-                partMeshFingerprintsVerifiedBeforeMerge);
+                partMeshFingerprintsVerifiedBeforeMerge,
+                captureSource);
         }
 
         /// <summary>

@@ -315,7 +315,25 @@ namespace AvatarPartAssembler.Editor.Preview
         public static IReadOnlyList<ApaPreviewRequest> DiscoverGroups(GameObject avatarRoot, ApaNumericPolicy numericPolicy)
         {
             if (avatarRoot == null) return new List<ApaPreviewRequest>();
-            return DiscoverGroups(avatarRoot, CollectAllInstallers(avatarRoot), numericPolicy);
+            return DiscoverGroups(avatarRoot, CollectAllInstallers(avatarRoot), numericPolicy, null);
+        }
+
+        /// <summary>
+        /// Captures the inputs of every target group of one avatar, reading each renderer through a source.
+        /// </summary>
+        /// <param name="captureSource">
+        /// Where the body and part meshes and materials are read from, or null for the live renderers. A caller
+        /// inside NDMF's preview pipeline passes the proxy source, so the capture sees what an earlier preview
+        /// stage already wrote (a Mesh Cutter's cut body, a Material Setter's swap) instead of the author's
+        /// original state.
+        /// </param>
+        public static IReadOnlyList<ApaPreviewRequest> DiscoverGroups(
+            GameObject avatarRoot,
+            ApaNumericPolicy numericPolicy,
+            ApaCaptureSource captureSource)
+        {
+            if (avatarRoot == null) return new List<ApaPreviewRequest>();
+            return DiscoverGroups(avatarRoot, CollectAllInstallers(avatarRoot), numericPolicy, captureSource);
         }
 
         /// <summary>
@@ -328,10 +346,16 @@ namespace AvatarPartAssembler.Editor.Preview
         /// a list in hierarchy order would make every refresh look like a change and rebuild the preview forever.
         /// </param>
         /// <param name="numericPolicy">Tolerances, or null for the defaults.</param>
+        /// <param name="captureSource">
+        /// Where each renderer's mesh and materials are read from, or null for the live renderers. Threaded
+        /// straight into <see cref="ApaCore.PlanGroups"/>, so discovery and the core cannot disagree about what
+        /// the body is.
+        /// </param>
         public static IReadOnlyList<ApaPreviewRequest> DiscoverGroups(
             GameObject avatarRoot,
             IReadOnlyList<AvatarPartInstaller> allInstallers,
-            ApaNumericPolicy numericPolicy)
+            ApaNumericPolicy numericPolicy,
+            ApaCaptureSource captureSource = null)
         {
             var requests = new List<ApaPreviewRequest>();
             if (avatarRoot == null) return requests;
@@ -365,11 +389,12 @@ namespace AvatarPartAssembler.Editor.Preview
 
             // The same grouped planning entry point the build pass calls: every group is resolved, validated, and
             // planned, and a failure in any group means the avatar has no preview at all — exactly as a failure in
-            // any group means the build produces no partial avatar.
+            // any group means the build produces no partial avatar. The capture source is the one the caller
+            // supplied, so a proxy substitution reaches the core's capture rather than being read around it.
             TargetGroupPlanResult planned;
             try
             {
-                planned = ApaCore.PlanGroups(avatarRoot, policy, out _);
+                planned = ApaCore.PlanGroups(avatarRoot, policy, out _, captureSource: captureSource);
             }
             catch (Exception e)
             {
@@ -454,7 +479,7 @@ namespace AvatarPartAssembler.Editor.Preview
             IReadOnlyList<AvatarPartInstaller> allInstallers,
             ApaNumericPolicy numericPolicy)
         {
-            var groups = DiscoverGroups(avatarRoot, allInstallers, numericPolicy);
+            var groups = DiscoverGroups(avatarRoot, allInstallers, numericPolicy, null);
             return groups.Count > 0 ? groups[0] : null;
         }
 

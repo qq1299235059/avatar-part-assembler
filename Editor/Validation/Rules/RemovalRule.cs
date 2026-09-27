@@ -93,7 +93,12 @@ namespace AvatarPartAssembler.Editor
         {
             if (context.Base == null || context.Base.Mesh == null) return;
 
-            var mesh = context.Base.Mesh;
+            // Removal addresses are authored against the body the profile was authored on. A capture that read a
+            // substitute (a preview stage's cut body) records the proven correspondence, and the addresses are
+            // validated against the authored mesh it maps to; without one this is the captured mesh and the rule
+            // is unchanged. Validating against the cut mesh would report an authored address as out of range
+            // merely because the earlier stage removed triangles before it.
+            var mesh = context.Base.AuthoredMesh;
 
             // Every claim on a base triangle, in canonical part order because the part list is already sorted.
             // Address validation and the report happen while the claims are collected, so a malformed address is

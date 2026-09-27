@@ -20,10 +20,16 @@ namespace AvatarPartAssembler.Tests
     /// </para>
     /// <para>
     /// The edges (<c>A -&gt; B</c> means "A declares a reference to B"):
-    /// <c>editor -&gt; runtime</c>, <c>preview -&gt; editor</c>, <c>ndmf -&gt; preview</c>,
-    /// <c>tests -&gt; {runtime, editor, preview, ndmf}</c>. Preview's declared reference to the
-    /// <c>nadena.dev.ndmf</c> <i>package</i> is required — a render filter implements
-    /// <c>nadena.dev.ndmf.preview.IRenderFilter</c> — and is not an edge to this package's
+    /// <c>runtime -&gt; nadena.dev.ndmf.runtime</c>, <c>editor -&gt; runtime</c>, <c>preview -&gt; editor</c>,
+    /// <c>ndmf -&gt; preview</c>,
+    /// <c>tests -&gt; {runtime, editor, preview, ndmf, nadena.dev.ndmf.runtime}</c>. The runtime assembly's
+    /// reference to the NDMF <i>runtime</i> assembly is what lets <c>AvatarPartInstaller</c> implement
+    /// <c>INDMFEditorOnly</c> — the interface that makes the VRChat SDK treat it as editor-only — without this
+    /// package's runtime assembly referencing the VRChat SDK or UnityEditor; NDMF's runtime assembly does not
+    /// reference this package, so the new edge cannot close a cycle. The test assembly names that interface
+    /// directly, and Unity's assembly references are not transitive, so it declares the reference itself.
+    /// Preview's declared reference to the <c>nadena.dev.ndmf</c> <i>package</i> is required — a render filter
+    /// implements <c>nadena.dev.ndmf.preview.IRenderFilter</c> — and is not an edge to this package's
     /// <c>dev.avatar-part-assembler.editor.ndmf</c> assembly, which is what would be a cycle.
     /// </para>
     /// </remarks>
@@ -50,6 +56,12 @@ namespace AvatarPartAssembler.Tests
         public void EveryAsmdefDeclaresItsContractReferences()
         {
             CollectionAssert.AreEquivalent(
+                new[] { "nadena.dev.ndmf.runtime" },
+                ReferencesOf(Runtime),
+                "The runtime installer implements NDMF's editor-only compatibility interface, so the runtime " +
+                "assembly needs NDMF's runtime assembly — and nothing else.");
+
+            CollectionAssert.AreEquivalent(
                 new[] { Runtime, "nadena.dev.modular-avatar.core" },
                 ReferencesOf(Editor),
                 "The core editor assembly builds against the runtime and Modular Avatar.");
@@ -65,9 +77,10 @@ namespace AvatarPartAssembler.Tests
                 "The NDMF assembly is the only one that may see both the preview filter and NDMF.");
 
             CollectionAssert.AreEquivalent(
-                new[] { Runtime, Editor, Preview, Ndmf, "nadena.dev.ndmf", "UnityEngine.TestRunner", "UnityEditor.TestRunner" },
+                new[] { Runtime, Editor, Preview, Ndmf, "nadena.dev.ndmf", "nadena.dev.ndmf.runtime", "UnityEngine.TestRunner", "UnityEditor.TestRunner" },
                 ReferencesOf(Tests),
-                "The tests drive the preview, the NDMF processor and the core directly.");
+                "The tests drive the preview, the NDMF processor and the core directly, and name NDMF's " +
+                "editor-only compatibility interface to pin the installer's declaration.");
         }
 
         /// <summary>NDMF references Preview; Preview must never reference NDMF back.</summary>

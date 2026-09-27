@@ -487,6 +487,7 @@ namespace AvatarPartAssembler.Editor
                 policy,
                 false,
                 false,
+                ApaCaptureSource.Live,
                 issues);
         }
 
@@ -507,14 +508,21 @@ namespace AvatarPartAssembler.Editor
         /// </para>
         /// </remarks>
         /// <returns>The group plans in ordinal group-key order, or an empty list on any blocking issue.</returns>
+        /// <param name="captureSource">
+        /// Where each renderer's mesh and materials are read from, or null for <see cref="ApaCaptureSource.Live"/>.
+        /// The preview supplies a source that reads the proxy NDMF prepared, so a capture sees what an earlier
+        /// preview stage already wrote; every other caller leaves it null and reads the renderer itself.
+        /// </param>
         public static IReadOnlyList<ApaTargetGroupPlan> BuildGroups(
             GameObject avatarRoot,
             ApaNumericPolicy numericPolicy,
             out List<ValidationIssue> issues,
             bool allowPostMergePartArmatureScope = false,
-            bool partMeshFingerprintsVerifiedBeforeMerge = false)
+            bool partMeshFingerprintsVerifiedBeforeMerge = false,
+            ApaCaptureSource captureSource = null)
         {
             issues = new List<ValidationIssue>();
+            var source = captureSource ?? ApaCaptureSource.Live;
 
             if (avatarRoot == null)
             {
@@ -600,6 +608,7 @@ namespace AvatarPartAssembler.Editor
                     policy,
                     allowPostMergePartArmatureScope,
                     partMeshFingerprintsVerifiedBeforeMerge,
+                    source,
                     issues);
 
                 // A failing group does not stop the walk: the report must describe every group, so the caller
@@ -1031,9 +1040,11 @@ namespace AvatarPartAssembler.Editor
             ApaNumericPolicy policy,
             bool allowPostMergePartArmatureScope,
             bool partMeshFingerprintsVerifiedBeforeMerge,
+            ApaCaptureSource captureSource,
             List<ValidationIssue> issues)
         {
             var groupIssues = new List<ValidationIssue>();
+            var source = captureSource ?? ApaCaptureSource.Live;
 
             // Marshmallow PB runs before the post-merge assembly pass, and it removes its own setup component and
             // moves its generated root's dummy bone while it wraps the breast bones. The detection therefore
@@ -1044,7 +1055,7 @@ namespace AvatarPartAssembler.Editor
 
             var targetArmature = ResolveGroupTargetArmature(avatarRoot, targetRenderer, installers, groupIssues);
 
-            var baseSnapshot = CaptureBase(avatarRoot, targetRenderer, targetArmature, policy, groupIssues);
+            var baseSnapshot = CaptureBase(avatarRoot, targetRenderer, targetArmature, policy, source, groupIssues);
             if (baseSnapshot == null)
             {
                 AppendTagged(issues, groupIssues, groupKey);
@@ -1058,6 +1069,7 @@ namespace AvatarPartAssembler.Editor
                 installers,
                 policy,
                 allowPostMergePartArmatureScope,
+                source,
                 groupIssues);
             var ordered = ValidationContext.SortParts(partSnapshots);
 
@@ -1278,11 +1290,12 @@ namespace AvatarPartAssembler.Editor
             Renderer targetRenderer,
             Transform targetArmature,
             ApaNumericPolicy policy,
+            ApaCaptureSource captureSource,
             List<ValidationIssue> issues)
         {
-            var mesh = targetRenderer is SkinnedMeshRenderer skinned
-                ? skinned.sharedMesh
-                : targetRenderer.GetComponent<MeshFilter>()?.sharedMesh;
+            var source = captureSource ?? ApaCaptureSource.Live;
+            var liveMesh = ApaCaptureSource.ReadLiveMesh(targetRenderer);
+            var mesh = source.MeshFor(targetRenderer, liveMesh);
 
             if (mesh == null)
             {
@@ -1293,6 +1306,16 @@ namespace AvatarPartAssembler.Editor
                     detail: "renderer=" + targetRenderer.name));
                 return null;
             }
+
+            // A capture that read a substitute says so, and the body provenance gate below decides whether the
+            // profile's addresses can be mapped onto it. Reporting the substitution here is what keeps a later
+            // compatibility mismatch attributable to the earlier preview stage rather than to the author's mesh.
+            ReportSubstitution(source, targetRenderer, liveMesh, issues);
+
+            // The profile's addresses are expressed against the mesh it was authored on, and a substitution means
+            // the captured mesh is a different one. The correspondence is proven exactly, never assumed: an
+            // unprovable derivation blocks here, before any rule reads an address.
+            var bodyProvenance = CaptureBodyProvenance(targetRenderer, liveMesh, mesh, issues);
 
             // The bone signature is scoped to the selected target armature: a body bone's identity is its path
             // relative to that armature, which is the scope the final bone table merges part bones in.
@@ -1327,7 +1350,7 @@ namespace AvatarPartAssembler.Editor
                 return null;
             }
 
-            var materials = MeshSnapshotFactory.CaptureMaterials(targetRenderer);
+            var materials = source.MaterialsFor(targetRenderer, ApaCaptureSource.ReadLiveMaterials(targetRenderer));
             // The avatar root records ApaAvatarPath.Root; the record is diagnostic and is what the authoring
             // capture stores, so it must use the canonical routine rather than a special case here.
             var path = MeshSnapshotFactory.RelativePath(avatarRoot.transform, targetRenderer.transform);
@@ -1342,7 +1365,99 @@ namespace AvatarPartAssembler.Editor
                 MeshSnapshotFactory.CaptureRendererLocalToWorld(targetRenderer),
                 targetArmature != null
                     ? MeshSnapshotFactory.RelativePath(avatarRoot.transform, targetArmature)
-                    : string.Empty);
+                    : string.Empty,
+                bodyProvenance);
+        }
+
+        /// <summary>
+        /// Proves a substituted body mesh is the authored body with triangles removed, or reports the refusal.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// It runs only when the capture read a mesh other than the renderer's own: an ordinary capture has no
+        /// substitution to reconcile, so the build, the authoring layer, and every direct core caller pay nothing
+        /// and record nothing.
+        /// </para>
+        /// <para>
+        /// The authored mesh is snapshotted here, from the renderer's own live mesh, because that is the only
+        /// place both meshes are still available: the substitute belongs to the pipeline and the live mesh belongs
+        /// to the author's renderer. A proven correspondence is reported as <c>APA057</c>; an unprovable one is a
+        /// blocking <c>APA056</c> and no provenance is returned, so the group fails closed rather than applying
+        /// authored addresses to a mesh nobody proved they describe.
+        /// </para>
+        /// </remarks>
+        private static ApaBodyMeshProvenance CaptureBodyProvenance(
+            Renderer targetRenderer,
+            Mesh liveMesh,
+            Mesh capturedMesh,
+            List<ValidationIssue> issues)
+        {
+            // Reference identity: a source that returns the renderer's own mesh object captured the authored
+            // body, whatever it did to obtain it. Nothing has to be proven about a mesh compared with itself.
+            if (ReferenceEquals(capturedMesh, liveMesh)) return null;
+
+            var authored = CaptureForProvenance(liveMesh, issues);
+            var captured = CaptureForProvenance(capturedMesh, issues);
+
+            if (!ApaBodyMeshProvenance.TryProve(authored, captured, issues, out var provenance)) return null;
+
+            issues.Add(ValidationIssue.Info(
+                ApaErrorCode.BodyMeshDerivationProven,
+                ApaIssuePhase.Compatibility,
+                "The captured body mesh is the authored body with triangles removed (" + provenance.Describe() +
+                "), so the profile's triangle and seam addresses were mapped onto it rather than applied to it " +
+                "directly. The profile stays authored against the original body.",
+                detail: "reason=body-provenance-proven-derivation; " + provenance.Describe() +
+                        "; renderer=" + targetRenderer.name));
+
+            return provenance;
+        }
+
+        /// <summary>
+        /// Snapshots one of the two meshes the derivation proof compares, reporting a mesh that cannot be read.
+        /// </summary>
+        /// <remarks>
+        /// A null mesh is left null rather than reported here: the proof turns either null into its own blocking
+        /// <c>APA056</c> with the <c>body-provenance-mesh-unreadable</c> token, so the refusal has one author.
+        /// </remarks>
+        private static MeshSnapshot CaptureForProvenance(Mesh mesh, List<ValidationIssue> issues)
+        {
+            if (mesh == null) return null;
+
+            var snapshot = MeshSnapshotFactory.Capture(mesh, null, out var captureIssues, null);
+            if (captureIssues != null) issues.AddRange(captureIssues);
+            return snapshot;
+        }
+
+        /// <summary>
+        /// Reports that a capture read a substitute instead of the renderer's own live value.
+        /// </summary>
+        /// <remarks>
+        /// Informational and non-blocking by design: a substitution is not a defect, it is the preview doing its
+        /// job. What makes it worth a line is attribution — when the profile's fingerprint no longer matches, the
+        /// report already says that an earlier preview stage, not the author, replaced the geometry. The detail
+        /// carries the source's stable <c>reason=</c> token and the renderer it happened to.
+        /// </remarks>
+        private static void ReportSubstitution(
+            ApaCaptureSource source,
+            Renderer renderer,
+            Mesh liveMesh,
+            List<ValidationIssue> issues,
+            string partId = null)
+        {
+            if (source == null || renderer == null || issues == null) return;
+
+            var reason = source.SubstitutionReasonFor(renderer);
+            if (string.IsNullOrEmpty(reason)) return;
+
+            issues.Add(ValidationIssue.Info(
+                ApaErrorCode.PreviewUpstreamModification,
+                ApaIssuePhase.Compatibility,
+                "The capture of '" + renderer.name + "' read the state an earlier preview stage wrote (its mesh " +
+                "or material list), not the author's renderer, so the preview shows what that stage produced " +
+                "together with this assembly. The build reads the renderer itself and is unaffected.",
+                partId,
+                detail: "reason=" + reason + "; renderer=" + renderer.name));
         }
 
         /// <summary>
@@ -1362,8 +1477,10 @@ namespace AvatarPartAssembler.Editor
             IReadOnlyList<AvatarPartInstaller> installers,
             ApaNumericPolicy policy,
             bool allowPostMergePartArmatureScope,
+            ApaCaptureSource captureSource,
             List<ValidationIssue> issues)
         {
+            var source = captureSource ?? ApaCaptureSource.Live;
             var result = new List<PartSnapshot>(installers.Count);
 
             // One informational line per profile whose identity had to be derived, so a legacy profile is
@@ -1417,9 +1534,12 @@ namespace AvatarPartAssembler.Editor
                     continue;
                 }
 
-                var partMesh = partRenderer is SkinnedMeshRenderer partSkinned
-                    ? partSkinned.sharedMesh
-                    : partRenderer.GetComponent<MeshFilter>()?.sharedMesh;
+                var livePartMesh = ApaCaptureSource.ReadLiveMesh(partRenderer);
+                var partMesh = source.MeshFor(partRenderer, livePartMesh);
+
+                // A part mesh an earlier preview stage substituted is reported for the same reason the body's is:
+                // the report has to say that the geometry came from that stage, not from the author's renderer.
+                ReportSubstitution(source, partRenderer, livePartMesh, issues, PartIdOf(installer));
 
                 // A protected prefab saves its part renderer with no mesh at all, so a null mesh is expected
                 // rather than a defect when the installer carries a payload. The payload is decoded here, through
@@ -1529,7 +1649,8 @@ namespace AvatarPartAssembler.Editor
                     continue;
                 }
 
-                var materials = MeshSnapshotFactory.CaptureMaterials(partRenderer);
+                var materials = source.MaterialsFor(
+                    partRenderer, ApaCaptureSource.ReadLiveMaterials(partRenderer));
 
                 var uvSemantics = profile.UvSemantics.Length > 0
                     ? profile.UvSemantics

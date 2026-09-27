@@ -1,5 +1,67 @@
 # Changelog
 
+## [Unreleased] — editor-only installer, build cleanup, and preview compatibility with Modular Avatar's mesh stages
+
+- **`AvatarPartInstaller` is editor-only, so the VRChat SDK panel stops reporting it.** The SDK panel validates the
+  *scene* avatar with `SDK3.Validation.AvatarValidation.FindIllegalComponents`, whose predicate drops a component
+  when it is whitelisted or — with `excludeEditorOnly: true` — when `ValidationUtils.IsEditorOnly` is true, and that
+  helper tests `component is VRC.SDKBase.IEditorOnly` first. The component now implements
+  `nadena.dev.ndmf.INDMFEditorOnly`, NDMF's runtime compatibility interface, which compiles to a
+  `VRC.SDKBase.IEditorOnly` derivative whenever the VRChat SDK is present; the runtime asmdef gains exactly one
+  reference (`nadena.dev.ndmf.runtime`) and the package version stays `0.5.2`. The **GameObject is never tagged
+  `EditorOnly`** — that tag would delete the part's bones, children and prefab-instance data in NDMF's
+  `RemoveEditorOnlyPass` and in the SDK's own strip — and nothing else about the component changes, so preview
+  discovery, the assembly pass, protected-mesh hydration, the Play Mode prebuild and every serialized field are
+  exactly as they were. Editor-only components are stripped at the very end of the VRChat preprocess chain (Modular
+  Avatar and VRCFury both replace the SDK's `RemoveAvatarEditorOnly` with late-stage callbacks), which is after
+  every APA pass; on the paths that call `AvatarProcessor.ProcessAvatar` directly — this package's Play Mode
+  prebuild, NDMF's own manual build — no strip callback runs at all, and `ApaInstallerCleanupPass` is what removes
+  the component there.
+- **A successful build clone carries no `AvatarPartInstaller`.** The assembly consumes an installer only when the
+  part's geometry was assembled, so a parked installer, an installer whose part contributed no geometry, and
+  every installer of an avatar that was never assembled used to survive into the uploaded avatar — where the
+  VRChat client reports *"The following component types are found on the Avatar and will be removed by the
+  client: AvatarPartInstaller"*. A new Transforming pass (`ApaInstallerCleanupPass`) removes every remaining
+  installer from the clone after the empty-source cleanup. It removes the **component only** — the object, its
+  bones, children, and prefab data survive — and it is gated on `BuildContext.Successful`, so a failed build is
+  never mutated and keeps its evidence. The removal is reported once per avatar as `APA058
+  INSTALLER_REMOVED_FROM_BUILD` (`reason=installer-removed-from-build`).
+- **The Scene View preview reads what Modular Avatar's preview stages wrote, not the author's renderers.**
+  NDMF runs render filters in pass order over one proxy per renderer and every earlier stage's `OnFrame` has
+  already run when a later stage is instantiated, so the proxy this package's filter receives carries Modular
+  Avatar's Mesh Cutter mesh, Material Setter material list, and Shape Changer blend-shape weights. The capture now
+  goes through a seam (`ApaCaptureSource`) that the preview implements as `ApaPreviewCaptureSource` over the proxy
+  pairs NDMF hands it, so a cut body is assembled instead of being overwritten by the uncut original every frame.
+  A substitution is reported as `APA055 PREVIEW_UPSTREAM_MODIFICATION` with the stable tokens
+  `upstream-preview-mesh-modified` and `upstream-preview-materials-modified`; a proxy that is missing or destroyed
+  falls back to the live renderer, and the build (which passes no source) reads exactly what it always read.
+- **A substituted body mesh is proven before any authored address is mapped onto it.** A profile's removal
+  triangles, seam vertex indices, and compatibility fingerprint are expressed against the mesh the profile was
+  authored on, so feeding a cutter's mesh in as "the base" would either block or delete the wrong triangles. The
+  capture now proves that the substituted mesh is the authored body with triangles removed
+  (`ApaBodyMeshProvenance`: same submesh layout, order-preserving identical vertices at their authored indices,
+  order-preserving triangle subsequences per submesh, identical blend shapes and bind poses, the cutter's
+  degenerate `(0,0,0)` placeholder admitted as "this submesh was emptied"), maps both address directions, and
+  reports `APA057 BODY_MESH_DERIVATION_PROVEN`. A derivation that cannot be proven blocks with
+  `APA056 BODY_MESH_DERIVATION_UNPROVEN` and a stable `reason=` token instead of guessing. `BaseSnapshot` gains
+  `BodyProvenance` and `AuthoredMesh`; compatibility and removal validation and the removal plan all stay in the
+  authored address space, and a claim whose triangle the cutter already removed is dropped as satisfied.
+- **The frame's materials and blend-shape weights come from the proxy.** `ApaPreviewLiveMaterials` reads each
+  renderer's effective material list through the proxy map (so a Material Setter's swap is what the assembled
+  list resolves from, and the change token notices it), and `ApaPreviewProxyApplier` reads each binding's weight
+  from the substitute renderer before the assembled mesh replaces the proxy's — the shape is looked up by name
+  first, because the proxy may hold a different mesh object. An APA node therefore no longer overwrites a Shape
+  Changer weight, a Mesh Cutter mesh, or a Material Setter swap when it writes its own result last.
+- **The preview re-captures and re-binds instead of reusing stale inputs.** `ApaPreviewNode.Create` re-runs
+  discovery through the proxy map when an earlier stage substituted the group's geometry (a re-capture that
+  cannot be produced draws nothing and says why, rather than falling back to the uncut original), every
+  `Refresh` re-points the map at the proxies it was handed, and `Dispose` clears it. A differently cut body is a
+  different fingerprint, so a refresh rebuilds rather than reusing a cached mesh.
+- **Not in this milestone:** the build path still captures the post-Merge-Armature clone, so a Mesh Cutter that
+  runs *in the build* on the body is still reported by the existing compatibility diagnostics rather than proven;
+  the derivation proof covers the body only (a cutter on a *part* mesh still blocks); and the EditMode suites and
+  a live Scene View were not run for this change (the editor session holds the project lock).
+
 ## [0.5.2] — Marshmallow PB compatibility and authoring UI improvements
 
 - 增加 Marshmallow PB 的骨骼兼容处理，并补充相关验证。

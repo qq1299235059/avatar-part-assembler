@@ -50,6 +50,17 @@ namespace AvatarPartAssembler.Editor.Preview
         private readonly IReadOnlyList<AvatarPartInstaller> _installers;
         private readonly Dictionary<string, Renderer> _partRenderers;
 
+        /// <summary>
+        /// Where a renderer's material list is read from, or null for the renderer's own list.
+        /// </summary>
+        /// <remarks>
+        /// The preview passes its proxy map here. Modular Avatar's Material Setter writes the swapped list onto
+        /// the proxy every frame, and NDMF resets the proxy from the original before the stages run, so the
+        /// proxy — not the author's renderer — is the live state this frame draws. Null keeps every other caller
+        /// reading exactly what it read before the seam existed.
+        /// </remarks>
+        private readonly ApaCaptureSource _readSource;
+
         private Material[] _materials;
         private long _token;
         private bool _valid;
@@ -70,12 +81,14 @@ namespace AvatarPartAssembler.Editor.Preview
             MeshAssemblyPlan plan,
             ValidationContext context,
             Renderer targetRenderer,
-            IReadOnlyList<AvatarPartInstaller> installers)
+            IReadOnlyList<AvatarPartInstaller> installers,
+            ApaCaptureSource readSource)
         {
             _plan = plan;
             _context = context;
             _targetRenderer = targetRenderer;
             _installers = installers ?? Array.Empty<AvatarPartInstaller>();
+            _readSource = readSource;
             _partRenderers = ApaPreviewDiscovery.BuildPartRendererMap(_installers);
             // The capture records the exact renderer whose mesh entered the assembled plan. Prefer that
             // reference over re-discovering the first renderer under the part root: a prefab can contain helper
@@ -95,13 +108,19 @@ namespace AvatarPartAssembler.Editor.Preview
         }
 
         /// <summary>Creates a resolver for one node's plan and captured inputs.</summary>
+        /// <param name="readSource">
+        /// Where each renderer's material list is read from, or null for the renderer's own list. The preview
+        /// passes its proxy map so a Material Setter's swap — which lives on the proxy — is what the assembled
+        /// material list is resolved from.
+        /// </param>
         public static ApaPreviewLiveMaterials Create(
             MeshAssemblyPlan plan,
             ValidationContext context,
             Renderer targetRenderer,
-            IReadOnlyList<AvatarPartInstaller> installers)
+            IReadOnlyList<AvatarPartInstaller> installers,
+            ApaCaptureSource readSource = null)
         {
-            return new ApaPreviewLiveMaterials(plan, context, targetRenderer, installers);
+            return new ApaPreviewLiveMaterials(plan, context, targetRenderer, installers, readSource);
         }
 
         /// <summary>
@@ -196,12 +215,13 @@ namespace AvatarPartAssembler.Editor.Preview
             return materials;
         }
 
-        private static bool TryReadLiveMaterial(Renderer renderer, int sourceSubMesh, out Material material)
+        /// <summary>Reads one slot's material through the read source, or reports that there is none.</summary>
+        private bool TryReadLiveMaterial(Renderer renderer, int sourceSubMesh, out Material material)
         {
             material = null;
             if (renderer == null || sourceSubMesh < 0) return false;
 
-            var current = renderer.sharedMaterials;
+            var current = ReadMaterials(renderer);
             if (current == null || sourceSubMesh >= current.Length) return false;
 
             material = current[sourceSubMesh];
@@ -253,13 +273,21 @@ namespace AvatarPartAssembler.Editor.Preview
             }
         }
 
-        private static ulong MixArray(ulong hash, Renderer renderer)
+        /// <summary>
+        /// Mixes a renderer's effective material identities into the token.
+        /// </summary>
+        /// <remarks>
+        /// The <i>effective</i> list is what matters, not the renderer's own: a Material Setter's swap lives on
+        /// the proxy, so hashing the original would leave the token unchanged and the cached list in place while
+        /// the proxy draws something else.
+        /// </remarks>
+        private ulong MixArray(ulong hash, Renderer renderer)
         {
             if (renderer == null) return Mix(hash, 0);
 
             hash = Mix(hash, renderer.GetInstanceID());
 
-            var materials = renderer.sharedMaterials;
+            var materials = ReadMaterials(renderer);
             hash = Mix(hash, materials != null ? materials.Length : -1);
             if (materials == null) return hash;
 
@@ -285,10 +313,21 @@ namespace AvatarPartAssembler.Editor.Preview
             }
         }
 
+        /// <summary>
+        /// The material list a read must use for a renderer: the substitute's when the source has one.
+        /// </summary>
+        private Material[] ReadMaterials(Renderer renderer)
+        {
+            if (renderer == null) return Array.Empty<Material>();
+
+            var live = ApaCaptureSource.ReadLiveMaterials(renderer);
+            return _readSource != null ? _readSource.MaterialsFor(renderer, live) : live;
+        }
+
         private IReadOnlyList<Material> LiveMaterials(Renderer renderer)
         {
             if (renderer == null) return null;
-            return renderer.sharedMaterials ?? Array.Empty<Material>();
+            return ReadMaterials(renderer);
         }
 
         private Dictionary<string, IReadOnlyList<Material>> LivePartMaterials()

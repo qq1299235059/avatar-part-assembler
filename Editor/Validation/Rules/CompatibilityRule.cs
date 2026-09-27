@@ -95,7 +95,13 @@ namespace AvatarPartAssembler.Editor
                 return;
             }
 
-            var actual = context.Base.Mesh;
+            // The profile's signature, its triangle addresses, and its seam indices all describe the mesh the
+            // profile was authored against, so that is the mesh they are compared with. Without a proven
+            // substitution this IS the captured mesh and the comparison is byte-identical to the pre-seam
+            // behaviour; with one it is the authored body, and comparing the cut body instead would report a
+            // fingerprint mismatch for a substitution the capture already reconciled. See
+            // ApaBodyMeshProvenance and BaseSnapshot.AuthoredMesh.
+            var actual = context.Base.AuthoredMesh;
 
             // A topology summary cannot see an attribute-only reimport. The content fingerprint is the
             // fail-closed check for that case; keep the diagnostic separate so an author is told to recapture,

@@ -1,3 +1,4 @@
+using nadena.dev.ndmf;
 using UnityEngine;
 
 namespace AvatarPartAssembler
@@ -16,10 +17,42 @@ namespace AvatarPartAssembler
     /// This component deliberately holds only data. All validation, planning, and mesh generation live in the
     /// Editor assembly so that the Runtime assembly stays free of UnityEditor dependencies.
     /// </para>
+    /// <para>
+    /// <b>It is editor-only, and that is a user-visible requirement.</b> The VRChat SDK's build panel scans the
+    /// selected avatar with <c>SDK3.Validation.AvatarValidation.FindIllegalComponents</c>, which calls
+    /// <c>ValidationUtils.FindIllegalComponents(target, whitelist, excludeEditorOnly: true)</c>. A component that
+    /// is not whitelisted and not editor-only is reported as <i>"The following component types are found on the
+    /// Avatar and will be removed by the client"</i> and offered a Select / Auto Fix action — which is exactly what
+    /// an author saw for every installer of theirs before this interface was declared.
+    /// <see cref="INDMFEditorOnly"/> is the fix: NDMF's runtime assembly compiles it to derive from
+    /// <c>VRC.SDKBase.IEditorOnly</c> when the VRChat SDK is present (and to a no-op interface when it is not), and
+    /// <c>ValidationUtils.IsEditorOnly</c> tests precisely <c>component is IEditorOnly</c> first. Declaring the
+    /// NDMF interface rather than the SDK's own type keeps this Runtime assembly free of a hard VRChat SDK
+    /// reference, and keeps it compilable in a project without the SDK.
+    /// </para>
+    /// <para>
+    /// <b>Only the component is editor-only; the GameObject is not.</b> Tagging the object <c>EditorOnly</c> would
+    /// also silence the scan, but it would delete the part's whole hierarchy — bones, children, colliders, and
+    /// prefab-instance data — in NDMF's <c>RemoveEditorOnlyPass</c> and in the SDK's own strip, destroying the
+    /// authoring data the preview and the assembly read. Nothing here touches a tag.
+    /// </para>
+    /// <para>
+    /// <b>Discovery is unaffected.</b> Editor-only components are stripped at the very end of the VRChat preprocess
+    /// chain — Modular Avatar and VRCFury both replace the SDK's <c>RemoveAvatarEditorOnly</c> with their own
+    /// late-stage callbacks — which is after NDMF's early hook has already run every APA pass, and on the paths
+    /// that call <c>AvatarProcessor.ProcessAvatar</c> directly (the Play Mode prebuild in this package, NDMF's own
+    /// manual build) no strip callback runs at all: <c>ApaInstallerCleanupPass</c> removes the component there.
+    /// Preview discovery, the assembly pass, protected-mesh hydration, and the Play Mode prebuild therefore still
+    /// find every installer.
+    /// </para>
+    /// <para>
+    /// <b>Serialization is unchanged.</b> No serialized field was added, removed, or retyped for this, so an
+    /// installer saved by an earlier version of the package loads with exactly the data it had.
+    /// </para>
     /// </remarks>
     [DisallowMultipleComponent]
     [AddComponentMenu("Avatar Part Assembler/Avatar Part Installer")]
-    public sealed class AvatarPartInstaller : MonoBehaviour
+    public sealed class AvatarPartInstaller : MonoBehaviour, INDMFEditorOnly
     {
         [SerializeField] private ApaPartProfile _profile;
         [SerializeField] private GameObject _partRoot;
