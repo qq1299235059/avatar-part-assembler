@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.4] — one APA Tools menu group
+
+- **The duplicate Chinese `Tools/部件装配器` group is gone; the `Tools` menu carries one APA group.** The
+  package registered the authoring window and the Play Mode compatibility toggle under both an English and a
+  Chinese spelling of the same submenu, so the `Tools` menu listed two APA groups at the same time — `Avatar
+  Part Assembler` and `部件装配器`. `ApaAuthoringWindow.Open` is now registered unconditionally at
+  `Tools/Avatar Part Assembler/Part Authoring` (the `#if APA_CHINESE_MENU` swap and the `OpenFromChineseMenu`
+  alias are removed), and `ApaPlayModeCompatibility` registers only
+  `Tools/Avatar Part Assembler/Play Mode + Gesture Manager Compatibility` (the second `[MenuItem]` pair and
+  `LocalizedMenuPath` are removed). The retired `APA_CHINESE_MENU` symbol is no longer defined by
+  `Editor/dev.avatar-part-assembler.editor.asmdef`, and the dead `ApaLocalization.UsesChineseMenuLog`,
+  `MenuLanguageDefineSymbol` and `ResolveMenuLabel` helpers — which existed only to swap the menu spellings —
+  are removed. Nothing else changes: the language selector and every translated string stay available inside
+  the window and the inspector, the English labels and menu priorities are untouched, and
+  `ChineseMenuGroupLabel` / `MenuPartAuthoringChinese` survive as the named spellings the menu contract forbids
+  in a menu path.
+- **The menu contract now pins the registered path set instead of an attribute count.**
+  `LocalizationContractTests.ProductionMenuItems_RegisterOneEnglishApaGroupOnly` evaluates every production
+  `[MenuItem]` argument (string literals plus the named label constants), asserts that the registered set is
+  exactly the two English paths, and asserts that no path carries a Chinese label and that the Chinese label
+  constants are never referenced outside their own declarations.
+  `AuthoringWindow_RegistersExactlyOneMenuEntry` now requires exactly one attribute with no compile-time guard,
+  and `EditorAssemblyDefinesNoMenuLanguageSymbol` replaces the test that pinned the retired symbol's presence.
+
 ## [0.5.3] — Play Mode assembly, editor-only installer, and Modular Avatar preview compatibility
 
 - **Play Mode assembles again: the activity predicate no longer reads Unity's activation bookkeeping.**
@@ -1051,7 +1075,7 @@ for source review and hands the user one executable acceptance plan.
 - `vrc_avatar_part_assembler_spec.md` gains the M3, M4, M5, and M6 implementation
   clarifications (§45–§48) and the M7 consolidation (§49), so the intent document and the
   shipped behaviour describe the same product.
-- Architecture documentation corrected and extended: the unknown-schema code is `APA015`
+- `work/.../architecture.md` corrected and extended: the unknown-schema code is `APA015`
   (not `APA012`), and the group model, the "one plan per group, one mesh per group"
   transaction, and the release-candidate status are recorded as architecture decisions.
 
