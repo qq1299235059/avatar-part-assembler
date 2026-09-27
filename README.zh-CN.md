@@ -11,6 +11,7 @@ Avatar Part Assembler（APA）的主要项目说明现在统一维护在 [`READM
 - [技术总览 / 架构与诊断注册表](Documentation~/OVERVIEW.md)
 - [变更历史](CHANGELOG.md)
 - [人工验收清单](USER_ACCEPTANCE_CHECKLIST.md)
+- [安全与隐私说明](SECURITY.md)
 - [许可证](LICENSE.md)
 
 如果你只是安装别人制作好的 APA 部件，从 [`README.md`](README.md) 的“Avatar 使用者：安装一个部件”开始即可。
