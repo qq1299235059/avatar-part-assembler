@@ -30,7 +30,7 @@
 - **事务式多部件装配**：所有目标组先完成验证和规划，再开始写入，避免半安装状态。
 - **Preview 与 Build 共用核心逻辑**：Scene View、Play Mode 与 Upload Build 不维护第二套装配器。
 - **Modular Avatar 集成**：支持临时 Merge Armature、Merge Animator 重定向和空源对象清理。
-- **可选受保护网格模式**：Prefab 可以不直接携带源 Mesh，而使用 APA 自有的认证加密载荷。
+- **可选受保护网格模式**：Prefab 可以不直接携带源 Mesh，而使用 APA 自有的加密载荷与完整性校验。
 - **双语 UI 与稳定诊断**：界面支持 English / 简体中文；错误 token 保持稳定，便于搜索、测试和反馈。
 
 ---
@@ -208,7 +208,7 @@ Profile 使用语义名描述 UV，而不是直接把 UV0 / UV1 当作跨资产�
 - Prefab 与 `_ProtectedMesh.asset` **必须一起分发**。
 
 > [!WARNING]
-> 该功能用于减少源网格以普通资产形式直接分发，并检测载荷篡改，**不是不可提取的 DRM**。构建发生在编辑器内，内存里的 Mesh 仍可能被观察；材质、贴图、骨骼和动画也仍是普通 Unity 资产引用。
+> 该功能用于减少源网格以普通资产形式直接分发，并检测意外损坏或未重新计算认证标签的修改，**不是抗恶意篡改边界，也不是不可提取的 DRM**。用于解码和生成认证标签的派生材料随插件一起发布，因此能够分析插件的接收者也能够重新构造有效载荷。构建发生在编辑器内，内存里的 Mesh 仍可能被观察；材质、贴图、骨骼和动画也仍是普通 Unity 资产引用。
 
 ---
 
@@ -256,6 +256,7 @@ APA 的 NDMF 流程包括：
 | **[技术总览](Documentation~/OVERVIEW.md)** | 开发者 / 维护者 | 数据契约、装配策略、NDMF 顺序、诊断注册表与设计原则 |
 | **[CHANGELOG.md](CHANGELOG.md)** | 所有人 | 各版本功能与修复 |
 | **[USER_ACCEPTANCE_CHECKLIST.md](USER_ACCEPTANCE_CHECKLIST.md)** | 发布 / 测试 | 人工验收项目 |
+| **[SECURITY.md](SECURITY.md)** | 所有人 / 维护者 | 隐私边界、Protected Mesh 威胁模型、安全报告与供应链说明 |
 | **[Third Party Notices.md](Third%20Party%20Notices.md)** | 开发者 | 第三方 API / 许可说明 |
 
 ---
