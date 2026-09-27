@@ -196,12 +196,30 @@ namespace AvatarPartAssembler
         /// one.
         /// </para>
         /// <para>
-        /// <c>isActiveAndEnabled</c> is Unity's own "enabled and active in hierarchy" property, which keeps this
-        /// predicate correct for a part parked anywhere in a disabled subtree rather than only on the object the
-        /// component sits on.
+        /// <c>enabled &amp;&amp; gameObject.activeInHierarchy</c> keeps this predicate correct for a part parked
+        /// anywhere in a disabled subtree rather than only on the object the component sits on: the component's
+        /// own switch and the whole ancestor chain are both read.
+        /// </para>
+        /// <para>
+        /// <b>The two terms are written out rather than delegating to <c>Behaviour.isActiveAndEnabled</c>.</b>
+        /// Unity's <c>isActiveAndEnabled</c> is <i>not</i> the same question during the window between a Play Mode
+        /// scene being processed and its components being awakened — the window both Play Mode entry points run
+        /// in. NDMF's Apply On Play executes from <c>ApplyOnPlayGlobalActivator.Awake</c> (execution order -9995)
+        /// and <c>ApaPlayModeScenePrebuild</c> runs earlier still, during scene processing, so neither can rely on
+        /// Unity's activation bookkeeping having caught up. A live editor log from this project records exactly
+        /// that failure: an installer whose skip diagnostic fell through to <c>reason=unknown-inactive-state</c>,
+        /// which is only reachable when the component is enabled, its GameObject is active in the hierarchy, and
+        /// <see cref="EnabledForBuild"/> is true, yet <c>isActiveAndEnabled</c> answered false. Discovery then
+        /// found no active installer, the assembly pass returned without assembling anything, and Play Mode showed
+        /// the author's unassembled avatar — the regression this predicate now cannot produce.
+        /// </para>
+        /// <para>
+        /// For every component Unity <i>has</i> awakened — the edit-mode scene, the Scene View preview, NDMF's
+        /// manual build, and the upload build — the two spellings are the same answer, so nothing outside the
+        /// Play Mode window changes behaviour.
         /// </para>
         /// </remarks>
-        public bool IsActiveForBuild => isActiveAndEnabled && _enabledForBuild;
+        public bool IsActiveForBuild => _enabledForBuild && enabled && gameObject.activeInHierarchy;
 
         /// <summary>
         /// A stable description of why <see cref="IsActiveForBuild"/> is false, for the skip diagnostic.
@@ -284,3 +302,4 @@ namespace AvatarPartAssembler
         }
     }
 }
+
