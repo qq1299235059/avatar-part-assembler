@@ -1051,7 +1051,7 @@ for source review and hands the user one executable acceptance plan.
 - `vrc_avatar_part_assembler_spec.md` gains the M3, M4, M5, and M6 implementation
   clarifications (§45–§48) and the M7 consolidation (§49), so the intent document and the
   shipped behaviour describe the same product.
-- `work/.../architecture.md` corrected and extended: the unknown-schema code is `APA015`
+- Architecture documentation corrected and extended: the unknown-schema code is `APA015`
   (not `APA012`), and the group model, the "one plan per group, one mesh per group"
   transaction, and the release-candidate status are recorded as architecture decisions.
 
