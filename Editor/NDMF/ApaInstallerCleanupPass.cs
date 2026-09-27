@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using AvatarPartAssembler.Editor.Localization;
 using nadena.dev.ndmf;
+using UnityEditor;
 using UnityEngine;
 
 namespace AvatarPartAssembler.Editor.Ndmf
@@ -83,6 +84,20 @@ namespace AvatarPartAssembler.Editor.Ndmf
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>It only ever runs on a build clone, never during a Play Mode transition.</b> NDMF's Apply On Play
+    /// processes the <i>live</i> Play Mode avatar in place — there is no clone — and this package's Play Mode
+    /// prebuild processes Unity's temporary Play Mode scene copy. Destroying components there would edit the
+    /// object the author is about to look at, and the pass's own report ("Only the build clone is touched") would
+    /// be false; with <i>Enter Play Mode Options &gt; Reload Scene</i> disabled, as this project runs, it is a
+    /// change to scene state that Unity is not obliged to undo. Play Mode is covered without this pass: on the
+    /// Apply On Play path the VRChat preprocess chain's own editor-only strip removes the components at the end of
+    /// the chain (Modular Avatar's <c>ReplacementRemoveIEditorOnly</c> and VRCFury's
+    /// <c>VrcfRemoveEditorOnlyComponents</c>, both at <c>Int32.MaxValue</c>), and the prebuild's scene copy is
+    /// discarded when Play Mode ends. A live editor log from this project shows why the gate matters: a Play Mode
+    /// entry whose assembly found no active installer still had this pass remove both of the author's installers
+    /// from the live avatar.
+    /// </para>
+    /// <para>
     /// <b>A failed build keeps its evidence.</b> <c>BuildContext.Successful</c> is checked first and the pass
     /// returns immediately when it is false, so a build that already reported an error is not mutated — removing
     /// components from a failed clone would only remove evidence from the report. The pass is also ordered after
@@ -109,6 +124,13 @@ namespace AvatarPartAssembler.Editor.Ndmf
         {
             var avatarRoot = context.AvatarRootObject;
             if (avatarRoot == null) return;
+
+            // A Play Mode transition means the processed object is a scene object, not a build clone: NDMF's
+            // Apply On Play has no clone, and the prebuild works on Unity's temporary Play Mode scene copy. The
+            // removal is for the uploaded result only, so it is skipped here and the Play Mode paths are covered
+            // by the VRChat chain's late editor-only strip and by Unity discarding the scene copy. See the class
+            // remarks.
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
 
             // The report is the gate, exactly as it is for the assembly and the empty-source cleanup: a build
             // that already failed is not mutated.
@@ -140,3 +162,4 @@ namespace AvatarPartAssembler.Editor.Ndmf
         }
     }
 }
+
