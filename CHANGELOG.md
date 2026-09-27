@@ -2,6 +2,45 @@
 
 ## [Unreleased] — editor-only installer, build cleanup, and preview compatibility with Modular Avatar's mesh stages
 
+- **Play Mode assembles again: the activity predicate no longer reads Unity's activation bookkeeping.**
+  `AvatarPartInstaller.IsActiveForBuild` delegated to `Behaviour.isActiveAndEnabled`, which is *not* the same
+  question as "enabled on an active object" during the window between a Play Mode scene being processed and its
+  components being awakened — the window both Play Mode entry points run in (this package's
+  `ApaPlayModeScenePrebuild` runs during scene processing, and NDMF's Apply On Play runs from
+  `ApplyOnPlayGlobalActivator.Awake` at execution order -9995). A live editor log recorded the failure exactly:
+  an installer whose skip diagnostic fell through to `reason=unknown-inactive-state`, which is only reachable when
+  the component is enabled, its GameObject is active in the hierarchy and `EnabledForBuild` is true, yet
+  `isActiveAndEnabled` answered false. Discovery then found no active installer, the assembly pass returned at its
+  discovery gate without reporting anything, and Play Mode showed the authoring hierarchy. The predicate is now
+  written out as `_enabledForBuild && enabled && gameObject.activeInHierarchy`: the same answer for every
+  component Unity has awakened — the edit-mode scene, the Scene View preview, NDMF's manual build, the upload
+  build — and the correct one for the components it has not. The three parked states are unchanged and still name
+  themselves (`enabledForBuild=false`, `componentDisabled=true`, `gameObjectInactive=true`).
+- **A refused Play Mode prebuild says so.** `ApaPlayModeScenePrebuild` used a chain of silent early returns, so a
+  Play Mode entry that assembled nothing left no trace at all and "the callback never ran" could not be told apart
+  from "every installer was parked". The trigger is now the pure, testable `ApaPlayModePrebuildGate.Decide(...)`
+  with one stable `reason=…` token per outcome (`not-a-play-mode-transition`,
+  `play-mode-compatibility-disabled`, `no-avatar-part-installer-in-scene`, `ndmf-apply-on-play-off`,
+  `no-active-avatar-part-installer`, `play-mode-prebuild`), and every outcome that means "this scene has APA parts
+  and they will not be assembled early" writes one warning naming the token, the counts and the one remedy. A
+  player build's scene processing and a scene without an APA part stay silent, because logging those would put a
+  line in the log for every build and every unrelated scene. The scene walk is the observation walk
+  (`GetComponentsInChildren<AvatarPartInstaller>(true)`, parked parts included) so that a scene whose parts are
+  all parked can still say so, while the avatar root is still taken only from installers that are active for
+  build.
+- **The successful-build installer cleanup no longer runs during a Play Mode transition.** The removal exists to
+  keep the *uploaded* avatar free of authoring components, but NDMF's Apply On Play has no clone — it processes the
+  live Play Mode avatar in place — and the prebuild processes Unity's temporary Play Mode scene copy. Destroying
+  components there edits the object the author is about to look at, and the pass's own report ("Only the build
+  clone is touched; the scene and every prefab are unchanged") was false on that path; with *Enter Play Mode
+  Options > Reload Scene* disabled, as this project runs, that is scene state Unity is not obliged to undo. A live
+  log shows the compounding failure: a Play Mode entry whose assembly found no active installer still had the pass
+  remove **both** of the author's installers from the live avatar. The pass now returns before the report gate
+  when `EditorApplication.isPlayingOrWillChangePlaymode` is true, and Play Mode stays covered without it — the
+  VRChat preprocess chain's own editor-only strip removes the components at the end of the chain (Modular Avatar's
+  and VRCFury's replacements, both at `Int32.MaxValue`), and the prebuild's scene copy is discarded when Play Mode
+  ends. Every edit-mode path that needs the removal — NDMF's manual build, the upload build — keeps it, and it
+  still runs only on a successful build.
 - **`AvatarPartInstaller` is editor-only, so the VRChat SDK panel stops reporting it.** The SDK panel validates the
   *scene* avatar with `SDK3.Validation.AvatarValidation.FindIllegalComponents`, whose predicate drops a component
   when it is whitelisted or — with `excludeEditorOnly: true` — when `ValidationUtils.IsEditorOnly` is true, and that
@@ -1385,4 +1424,5 @@ NDMF build integration follow in later milestones.
 - Skinned and blend-shaped input is blocked with `APA014` rather than assembled. This is
   the intended M1 behaviour, not a defect.
 - `APA007`, `APA008`, and `APA011` are allocated for M2 and are not produced by M1.
+
 
