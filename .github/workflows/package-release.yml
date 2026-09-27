@@ -26,7 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Read package manifest
         id: manifest
@@ -70,7 +72,7 @@ jobs:
         run: find dist/package -type f -name '*.meta' -print > metaList
 
       - name: Create Unity package archive
-        uses: pCYSl5EDgo/create-unitypackage@v1.2.3
+        uses: pCYSl5EDgo/create-unitypackage@b5c57408698b1fab8b3a84d4b67f767b8b7c0be9 # v1.2.3
         with:
           package-path: dist/${{ steps.manifest.outputs.unity_file }}
           include-files: metaList
