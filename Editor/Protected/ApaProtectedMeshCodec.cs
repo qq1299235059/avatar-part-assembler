@@ -484,9 +484,10 @@ namespace AvatarPartAssembler.Editor
     /// <para>
     /// <b>Confidentiality and integrity.</b> AES-256-CBC with PKCS#7 padding, encrypt-then-MAC with HMAC-SHA256,
     /// and a key derived with PBKDF2-SHA256 from a package-local secret, the stable part id, and a per-asset
-    /// random salt. The authentication tag covers the envelope header as well as the ciphertext, so the part id,
-    /// the codec identifier, and the declared lengths are tamper-evident too, not just the geometry. The tag is
-    /// compared in constant time.
+    /// random salt. The authentication tag covers the envelope header as well as the ciphertext, so accidental
+    /// corruption or modifications that do not recompute the tag are detected across the part id, codec identifier,
+    /// declared lengths, and geometry. Because the derivation material ships with the plugin, this is not an
+    /// authenticity boundary against a determined recipient. The tag is compared in constant time.
     /// </para>
     /// <para>
     /// <b>What this is not.</b> The derivation secret ships inside the package, and the decoded mesh exists in
@@ -520,8 +521,9 @@ namespace AvatarPartAssembler.Editor
         /// <remarks>
         /// <b>This is obfuscation, not a secret.</b> It is compiled into the shipped package and anyone who
         /// inspects the assembly can read it. It exists so that the key is not the payload itself and so that a
-        /// payload copied between two parts does not decode under the other part's context. The authenticated
-        /// header and the profile fingerprint are what actually make tampering fail closed.
+        /// payload copied between two parts does not decode under the other part's context without recomputing the
+        /// envelope. The authenticated header and profile fingerprint provide consistency checks, but because the
+        /// derivation material ships with the plugin they are not a trust boundary against a determined recipient.
         /// </remarks>
         private const string DerivationSecret = "apa-protected-part-mesh/v1:8f4b0c2e-6a1d-4f2b-9c3e-5d7a1b2c3d4e";
 
