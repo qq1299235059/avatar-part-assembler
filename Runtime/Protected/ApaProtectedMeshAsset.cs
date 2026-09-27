@@ -26,7 +26,7 @@ namespace AvatarPartAssembler
     /// <b>This is a distribution format, not an unextractable DRM boundary.</b> The package ships the derivation
     /// secret inside its own assemblies, and a build that can run in the Editor can be observed while it runs, so
     /// a determined recipient can recover the mesh. What the payload does provide is that the distributed part no
-    /// longer ships a raw mesh asset, that tampering with the payload is detected before any geometry is used, and
+    /// longer ships a raw mesh asset, that accidental corruption or modifications with a stale authentication tag are detected before any geometry is used, and
     /// that an accidental edit fails closed with a precise diagnostic rather than assembling wrong geometry.
     /// </para>
     /// <para>
