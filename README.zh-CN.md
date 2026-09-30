@@ -2,7 +2,7 @@
 
 Avatar Part Assembler（APA）的主要项目说明现在统一维护在 [`README.md`](README.md)。
 
-当前版本：`0.5.3` · Unity `2022.3`。
+当前版本：`0.5.4` · Unity `2022.3`。
 
 ## 文档导航
 
