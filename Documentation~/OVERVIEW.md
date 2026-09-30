@@ -22,15 +22,15 @@ authoring asset.
 
 ## Release-candidate status
 
-**This is package version `0.5.3`. It is not a 1.0 release and the full acceptance checklist
+**This is package version `0.5.4`. It is not a 1.0 release and the full acceptance checklist
 is still incomplete.**
 
 Earlier milestones exercised the core build path in Unity 2022.3.22f1 and completed a real
 NDMF `AvatarProcessor` run on a test avatar: the target body mesh was replaced, the APA part
 renderer/installer were consumed, and matching part bones were redirected to body bones.
 Those observations are historical validation evidence, not an automatic acceptance pass for
-0.5.3. The current release still requires the checklist rows to be rerun and recorded where
-0.5.3-specific acceptance is required.
+0.5.4. The current release still requires the checklist rows to be rerun and recorded where
+0.5.4-specific acceptance is required.
 
 The complete user verification plan is still in
 [`USER_ACCEPTANCE_CHECKLIST.md`](../USER_ACCEPTANCE_CHECKLIST.md). Preview rendering, broader
@@ -113,7 +113,7 @@ whether the Test Runner can see and run it.
 
 ## Play Mode and Gesture Manager
 
-`0.5.3` keeps Play Mode compatibility enabled by default. When a loaded scene contains an
+`0.5.4` keeps Play Mode compatibility enabled by default. When a loaded scene contains an
 `AvatarPartInstaller`, APA temporarily enables NDMF's official **Apply On Play** setting before
 entering Play Mode.
 
@@ -1214,7 +1214,7 @@ Two version numbers, never conflated:
 | Version | Meaning | Current value |
 | --- | --- | --- |
 | `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **5** (`ApaPartProfile.CurrentSchemaVersion`) |
-| Package version in `package.json` | The shipped build | **0.5.3** |
+| Package version in `package.json` | The shipped build | **0.5.4** |
 
 Migration policy:
 
@@ -1533,7 +1533,7 @@ observation of them (checklist 6.7) is still open.
 
 ### Pre-1.0 versioning
 
-`0.5.3` is a **pre-1.0 release** with the full acceptance checklist still open. The version will move to `1.0.0` only
+`0.5.4` is a **pre-1.0 release** with the full acceptance checklist still open. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
 no document, changelog entry, or commit message in this package may describe the
 package as stable, tested, or user-accepted.
