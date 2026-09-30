@@ -1,12 +1,12 @@
-# User acceptance checklist — 0.5.3 pre-1.0
+# User acceptance checklist — 0.5.4 pre-1.0
 
-**Status: full acceptance remains open for 0.5.3.** Earlier milestones recorded successful
+**Status: full acceptance remains open for 0.5.4.** Earlier milestones recorded successful
 compile and NDMF processor observations, but those historical observations are not automatically
 promoted to passes for the current package. The rows below are the authoritative acceptance
-plan for 0.5.3: any row not explicitly run and recorded against this version is still not a
+plan for 0.5.4: any row not explicitly run and recorded against this version is still not a
 pass, and end-to-end VRChat upload remains an explicit acceptance item.
 
-- Package version under test: **`0.5.3`** (`package.json`)
+- Package version under test: **`0.5.4`** (`package.json`)
 - Profile schema version under test: **5** (`ApaPartProfile.CurrentSchemaVersion`)
 - Expected environment: Unity **2022.3.22f1**, VRChat SDK Avatars **3.10.4**,
   NDMF **1.14.8**, Modular Avatar **1.19.0-alpha.0**
@@ -328,8 +328,8 @@ VRChat SDK: ____________
 ## Historical facts reconciled against earlier package milestones
 
 The statements below record earlier milestone reconciliation work. They are historical context,
-not acceptance evidence for 0.5.3. Where they conflict with the current source, package version,
-schema, or the status at the top of this file, the current source and the top-level 0.5.3 status
+not acceptance evidence for 0.5.4. Where they conflict with the current source, package version,
+schema, or the status at the top of this file, the current source and the top-level 0.5.4 status
 take precedence.
 
 1. **Assembly references.** The asmdefs are wired: `dev.avatar-part-assembler.editor.ndmf`
@@ -341,7 +341,7 @@ take precedence.
 2. **Preview registration.** The registration is wired in `ApaNdmfPlugin.Configure`:
    `seq.Run(ApaAssemblyPass.Instance).PreviewingWith(ApaPreviewRegistration.CreateFilter())`
    on the real Transforming pass. `PreviewStaticContractTests` locks the statement in
-3. **Version string.** The current `package.json` reads **`0.5.3`**. Earlier version-string
+3. **Version string.** The current `package.json` reads **`0.5.4`**. Earlier version-string
    reconciliation notes are retained here only as historical context.
 4. **Test count.** The suite is part of this release candidate. No count is quoted in
    prose anywhere; check 2.3 compares the executed count against the `[Test]` methods in
