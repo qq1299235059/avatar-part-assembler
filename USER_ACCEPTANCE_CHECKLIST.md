@@ -9,7 +9,7 @@ pass, and end-to-end VRChat upload remains an explicit acceptance item.
 - Package version under test: **`0.5.3`** (`package.json`)
 - Profile schema version under test: **5** (`ApaPartProfile.CurrentSchemaVersion`)
 - Expected environment: Unity **2022.3.22f1**, VRChat SDK Avatars **3.10.4**,
-  NDMF **1.14.0**, Modular Avatar **1.18.0-beta.0**
+  NDMF **1.14.8**, Modular Avatar **1.19.0-alpha.0**
 - This checklist was expanded across the integration, localization, mask-selection,
   review-fix, and authoring-simplification milestones. Group 10 covers language support,
   group 11 covers black/white texture-mask removal selection and `APA041`, and group 12
@@ -274,7 +274,7 @@ before it builds; until then the build refuses it with `APA042` and `APA043`.
 
 ---
 
-## 13. Protected part mesh mode (0.5.0)
+## 14. Protected part mesh mode (0.5.0)
 
 These rows cover the optional protected/encrypted mesh mode and the two defects it exposed: a
 protected prefab being misreported as a mesh-less part, and preview materials not following the
@@ -314,7 +314,7 @@ Fill this in when every group has been run. A group with any `fail` is not accep
 | 10. Language | 7 | | | |
 | 11. Texture mask | 9 | | | |
 | 12. Armature / seam (M10, plus the M11 body-authority row 12.11) | 11 | | | |
-| 13. Protected part mesh mode | 9 | | | |
+| 14. Protected part mesh mode | 10 | | | |
 
 Verdict: ☐ accepted as release candidate ☐ accepted with recorded exceptions
 ☐ not accepted
