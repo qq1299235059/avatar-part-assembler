@@ -7,8 +7,8 @@ remain under their own licenses.
 | Package | Version verified against | Role | License |
 | --- | --- | --- | --- |
 | `com.vrchat.avatars` | 3.10.4 | Target platform | [VRChat SDK license](https://vrchat.com/legal) |
-| `nadena.dev.ndmf` | 1.14.0 | Build lifecycle (Generating/Transforming passes, error report, object registry, preview session and render filters) | MIT |
-| `nadena.dev.modular-avatar` | 1.18.0-beta.0 | Transient armature merge (`ModularAvatarMergeArmature`) | MIT |
+| `nadena.dev.ndmf` | 1.14.8 | Build lifecycle (Generating/Transforming passes, error report, object registry, preview session and render filters) | MIT |
+| `nadena.dev.modular-avatar` | 1.19.0-alpha.0 | Transient armature merge (`ModularAvatarMergeArmature`) | MIT |
 | `com.unity.modules.animation` | Unity 2022.3.22f1 built-in | Required by the package manifest | Unity Companion License |
 | `com.unity.test-framework` | 1.1.x shipped with 2022.3 | Runs the EditMode suite. A **project** dependency, not declared by this package's `package.json` | Unity Companion License |
 
@@ -18,7 +18,7 @@ combination: the APIs below are version-specific.
 
 ## API surface relied upon
 
-### From `nadena.dev.ndmf` (1.14.0)
+### From `nadena.dev.ndmf` (1.14.8)
 
 Plugin and pass authoring:
 
@@ -57,7 +57,7 @@ One call publishes the preview filter, and it is the only registration path:
 seq.Run(ApaAssemblyPass.Instance).PreviewingWith(ApaPreviewRegistration.CreateFilter());
 ```
 
-### From `nadena.dev.modular-avatar` (1.18.0-beta.0)
+### From `nadena.dev.modular-avatar` (1.19.0-alpha.0)
 
 All Modular Avatar API calls live in one file,
 `Editor/Integration/MergeArmatureGenerator.cs`, so a dependency upgrade has one file to
