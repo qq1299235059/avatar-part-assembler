@@ -945,7 +945,7 @@ namespace AvatarPartAssembler
         /// <remarks>
         /// Kept as its own allocation record for the same reason as <see cref="Milestone9Authoring"/>: a later
         /// milestone reads which milestone introduced a code, and a milestone that adds codes never renumbers an
-        /// existing one. <c>APA045</c> and above are free; the next free code is <c>APA045</c>.
+        /// existing one. Codes from <c>APA045</c> onward are allocated by the milestone records below.
         /// </remarks>
         public static readonly string[] Milestone10 =
         {

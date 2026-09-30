@@ -37,7 +37,7 @@ https://github.com/qq1299235059/avatar-part-assembler.git
 也可以在 VCC/VPM 中添加发布清单后安装。锁定版本时使用仓库已有的 tag，例如：
 
 ```text
-https://github.com/qq1299235059/avatar-part-assembler.git#v0.4.0
+https://github.com/qq1299235059/avatar-part-assembler.git#v0.5.4
 ```
 
 ## 安装一个已有部件
@@ -54,11 +54,11 @@ https://github.com/qq1299235059/avatar-part-assembler.git#v0.4.0
 ### 安装受保护网格模式的部件
 
 作者可以用“受保护网格模式”发布部件：预制体的部件渲染器不带任何网格，几何体改为放在预制体旁边的
-`ApaProtectedMeshAsset`（`<预制体名>_ProtectedMesh.asset`）中，以经过认证的加密载荷保存。
+`ApaProtectedMeshAsset`（`<预制体名>_ProtectedMesh.asset`）中，以经过混淆并带完整性校验的载荷保存。
 
 - 交付时必须**同时**给出预制体与该受保护资产。缺少载荷的预制体会以 `APA053 PROTECTED_MESH_INVALID`
   阻断，而不是被当成普通空网格部件。
-- 该模式只保护网格的分发格式并检测篡改，**不是不可提取的 DRM**：构建在编辑器内运行，运行时内存中的网格
+- 该模式只保护网格的分发格式并检测篡改，**不是不可提取的 DRM**：编解码逻辑随公开包分发，构建在编辑器内运行，运行时内存中的网格
   可以被观察。材质、贴图、骨骼与动画仍然是普通资产引用。
 - 预览、Play Mode 与最终上传都会在内存中解密并装配同一份几何体；解密结果不会写回工程，也不会写进场景。
 - 源网格变化后必须重新创建受保护预制体；载荷的指纹不会自动刷新。

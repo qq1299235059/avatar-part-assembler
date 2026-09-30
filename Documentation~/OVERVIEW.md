@@ -12,7 +12,7 @@ authoring asset.
 > **Builder 不猜，Validator 负责阻止错误资产进入构建。**
 > The builder does not guess; the validator keeps bad assets out of the build.
 
-> **简体中文入口：[`README.zh-CN.md`](README.zh-CN.md)**
+> **简体中文入口：[`README.zh-CN.md`](../README.zh-CN.md)**
 > The creator workflow is documented in [`PART_AUTHORING_GUIDE.zh-CN.md`](PART_AUTHORING_GUIDE.zh-CN.md).
 > The plugin's UI is available in English and Simplified Chinese; see
 > [Language](#language). This file stays the English source of truth for the product's
@@ -20,20 +20,20 @@ authoring asset.
 
 ---
 
-## Pre-1.0 status
+## Release-candidate status
 
-**This is package version `0.5.3`. It is not a 1.0 release and the full acceptance checklist
+**This is package version `0.5.4`. It is not a 1.0 release and the full acceptance checklist
 is still incomplete.**
 
 Earlier milestones exercised the core build path in Unity 2022.3.22f1 and completed a real
 NDMF `AvatarProcessor` run on a test avatar: the target body mesh was replaced, the APA part
 renderer/installer were consumed, and matching part bones were redirected to body bones.
 Those observations are historical validation evidence, not an automatic acceptance pass for
-0.5.3. The current release still requires the checklist rows to be rerun and recorded where
-0.5.3-specific acceptance is required.
+0.5.4. The current release still requires the checklist rows to be rerun and recorded where
+0.5.4-specific acceptance is required.
 
 The complete user verification plan is still in
-[`USER_ACCEPTANCE_CHECKLIST.md`](USER_ACCEPTANCE_CHECKLIST.md). Preview rendering, broader
+[`USER_ACCEPTANCE_CHECKLIST.md`](../USER_ACCEPTANCE_CHECKLIST.md). Preview rendering, broader
 ecosystem combinations, and VRChat upload still need the remaining checklist coverage.
 Where this document and the running Editor disagree, the Editor is right and the document
 is a bug.
@@ -113,7 +113,7 @@ whether the Test Runner can see and run it.
 
 ## Play Mode and Gesture Manager
 
-`0.5.3` keeps Play Mode compatibility enabled by default. When a loaded scene contains an
+`0.5.4` keeps Play Mode compatibility enabled by default. When a loaded scene contains an
 `AvatarPartInstaller`, APA temporarily enables NDMF's official **Apply On Play** setting before
 entering Play Mode.
 
@@ -302,7 +302,7 @@ Open `Tools > Avatar Part Assembler > Part Authoring`. The window guides the flo
    Shapes`.
 10. **Validate** — runs the real validator. **`Dry-Run Assembly`** plans without
     creating a mesh, so you can see whether the part would actually build.
-11. **`Save Profile Asset`** — writes the `ApaPartProfile` (schema version 4). An
+11. **`Save Profile Asset`** — writes the `ApaPartProfile` (schema version 5). An
     existing asset at the path is only replaced after an explicit overwrite
     confirmation.
 12. **`Create Part Prefab`** — generates the portable prefab and adds/updates its
@@ -1030,7 +1030,7 @@ assembled.
 | Envelope version | `ApaProtectedMeshAsset.CurrentFormatVersion` (`1`) |
 | Codec identifier | `aes-256-cbc-pkcs7+hmac-sha256+pbkdf2-sha256` |
 | Key derivation | PBKDF2-SHA256, 20 000 iterations, from a package-local secret + stable part id + per-asset 16-byte salt |
-| Confidentiality | AES-256-CBC with PKCS#7 padding, 16-byte per-asset IV |
+| Payload protection | AES-256-CBC with PKCS#7 padding, 16-byte per-asset IV; the package-local key is public, so this is not a secrecy boundary |
 | Integrity | Encrypt-then-MAC, HMAC-SHA256 over the header (version, codec, part id, fingerprint, plaintext length) and the ciphertext, compared in constant time |
 | Bounds | Every count is checked against `ApaProtectedMeshLimits` **before** it drives an allocation, and against the bytes actually left in the stream |
 | Plaintext | A length-prefixed record carrying everything `MeshSnapshotFactory` reads: name, bounds, index format, vertices, normals, tangents, colors, UV0–UV7, per-submesh indices and topology, bone weights, bind poses, every blend shape with every frame's deltas, the recorded bone world-to-local matrices, and the bone paths |
@@ -1214,7 +1214,7 @@ Two version numbers, never conflated:
 | Version | Meaning | Current value |
 | --- | --- | --- |
 | `ApaPartProfile.SchemaVersion` | The shape of the serialized authoring data | **5** (`ApaPartProfile.CurrentSchemaVersion`) |
-| Package version in `package.json` | The shipped build | **0.5.3** |
+| Package version in `package.json` | The shipped build | **0.5.4** |
 
 Migration policy:
 
@@ -1533,7 +1533,7 @@ observation of them (checklist 6.7) is still open.
 
 ### Pre-1.0 versioning
 
-`0.5.3` is a **pre-1.0 release** with the full acceptance checklist still open. The version will move to `1.0.0` only
+`0.5.4` is a **pre-1.0 release** with the full acceptance checklist still open. The version will move to `1.0.0` only
 after the acceptance checklist has been executed and its results recorded. Until then,
 no document, changelog entry, or commit message in this package may describe the
 package as stable, tested, or user-accepted.

@@ -1286,7 +1286,7 @@ namespace AvatarPartAssembler.Editor.Authoring
             }
 
             EditorGUILayout.HelpBox(
-                Tr("The part mesh is written to the protected asset as an authenticated, encrypted payload and " +
+                Tr("The part mesh is written to the protected asset as an obfuscated, integrity-checked payload and " +
                    "the prefab's part renderer is saved with no mesh, so the prefab no longer depends on the " +
                    "source mesh or its model file. The payload must be delivered together with the prefab: a " +
                    "prefab whose payload is missing cannot be assembled. This protects the distribution format " +
