@@ -231,14 +231,14 @@ namespace AvatarPartAssembler.Editor.Localization
                 { "A protected mesh asset already exists at this path. Replacing it is asked for again when the " +
                   "prefab replacement is confirmed.",
                   "该路径已存在受保护网格资产。确认替换预制体时会再次询问是否替换它。" },
-                { "The part mesh is written to the protected asset as an authenticated, encrypted payload and " +
+                { "The part mesh is written to the protected asset as an obfuscated, integrity-checked payload and " +
                   "the prefab's part renderer is saved with no mesh, so the prefab no longer depends on the " +
                   "source mesh or its model file. The payload must be delivered together with the prefab: a " +
                   "prefab whose payload is missing cannot be assembled. This protects the distribution format " +
                   "and detects tampering; it is not unextractable DRM, because a build that runs in the Editor " +
                   "can be observed while it runs. Materials, textures, bones, and animation remain ordinary " +
                   "assets. Recreate the protected prefab after the source mesh changes.",
-                  "部件网格会以经过认证的加密载荷写入受保护资产，预制体的部件渲染器则保存为不带网格，" +
+                  "部件网格会以经过混淆并带完整性校验的载荷写入受保护资产，预制体的部件渲染器则保存为不带网格，" +
                   "因此预制体不再依赖源网格或其模型文件。该载荷必须与预制体一起分发：缺少载荷的预制体无法装配。" +
                   "这保护的是分发格式并能检测篡改，并不是不可提取的 DRM —— 在编辑器中运行的构建过程可以被观察。" +
                   "材质、贴图、骨骼与动画仍然是普通资产。源网格变化后必须重新创建受保护预制体。" },
